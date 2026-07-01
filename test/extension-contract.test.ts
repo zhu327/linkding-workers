@@ -300,6 +300,50 @@ describe("Search engine", () => {
     expect(compiled!.whereSql).toContain("AND");
     expect(compiled!.params.length).toBe(8); // 4 per term × 2 terms
   });
+
+  it("parses !untagged / !unread as special keywords", async () => {
+    const { parseSearchQuery } = await import("../src/services/search.js");
+    expect(parseSearchQuery("!untagged")).toEqual({ type: "keyword", keyword: "untagged" });
+    expect(parseSearchQuery("!unread")).toEqual({ type: "keyword", keyword: "unread" });
+    // combinable with other expressions via implicit AND
+    expect(parseSearchQuery("!untagged rust")?.type).toBe("and");
+  });
+
+  it("compileSearch translates !untagged / !unread to SQL", async () => {
+    const { parseSearchQuery, compileSearch } = await import("../src/services/search.js");
+    const untagged = compileSearch(parseSearchQuery("!untagged"))!;
+    expect(untagged.whereSql).toContain("NOT EXISTS");
+    expect(untagged.whereSql).toContain("bookmark_tags");
+    expect(untagged.params).toEqual([]);
+
+    const unread = compileSearch(parseSearchQuery("!unread"))!;
+    expect(unread.whereSql).toBe("unread = 1");
+    expect(unread.params).toEqual([]);
+
+    // unknown special keyword matches all
+    const unknown = compileSearch(parseSearchQuery("!unknown"))!;
+    expect(unknown.whereSql).toBe("1=1");
+  });
+
+  it("expressionToString round-trips special keywords", async () => {
+    const { parseSearchQuery, expressionToString } = await import("../src/services/search.js");
+    expect(expressionToString(parseSearchQuery("!untagged"))).toBe("!untagged");
+  });
+
+  it("compileLegacySearch handles !untagged / !unread", async () => {
+    const { compileLegacySearch } = await import("../src/services/search.js");
+    const untagged = compileLegacySearch("!untagged")!;
+    expect(untagged.whereSql).toContain("NOT EXISTS");
+    expect(untagged.params).toEqual([]);
+
+    const combined = compileLegacySearch("rust !untagged")!;
+    expect(combined.whereSql).toContain("LIKE");
+    expect(combined.whereSql).toContain("NOT EXISTS");
+    expect(combined.params.length).toBe(4); // only the "rust" term contributes params
+
+    // unknown special keyword ignored → no conditions → null
+    expect(compileLegacySearch("!unknown")).toBeNull();
+  });
 });
 
 describe("Exact field set assertions", () => {

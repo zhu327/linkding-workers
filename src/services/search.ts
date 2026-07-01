@@ -13,7 +13,7 @@ export type SearchExpression =
   | { type: "not"; operand: SearchExpression };
 
 // Tokenizer
-type TokenType = "TERM" | "TAG" | "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "EOF";
+type TokenType = "TERM" | "TAG" | "SPECIAL_KEYWORD" | "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "EOF";
 interface Token { type: TokenType; value: string; }
 
 function tokenize(query: string): Token[] {
@@ -28,6 +28,13 @@ function tokenize(query: string): Token[] {
       let tag = "";
       while (i < query.length && !/[\s()]/.test(query[i])) { tag += query[i]; i++; }
       if (tag) tokens.push({ type: "TAG", value: tag });
+      continue;
+    }
+    if (query[i] === "!") {
+      i++;
+      let keyword = "";
+      while (i < query.length && !/[\s()]/.test(query[i])) { keyword += query[i]; i++; }
+      if (keyword) tokens.push({ type: "SPECIAL_KEYWORD", value: keyword });
       continue;
     }
     if (query[i] === '"' || query[i] === "'") {
@@ -90,6 +97,7 @@ class Parser {
       this.peek().type === "AND" ||
       this.peek().type === "TERM" ||
       this.peek().type === "TAG" ||
+      this.peek().type === "SPECIAL_KEYWORD" ||
       this.peek().type === "LPAREN" ||
       this.peek().type === "NOT"
     ) {
@@ -112,6 +120,7 @@ class Parser {
     const t = this.peek();
     if (t.type === "TERM") { this.advance(); return { type: "term", term: t.value }; }
     if (t.type === "TAG") { this.advance(); return { type: "tag", tag: t.value }; }
+    if (t.type === "SPECIAL_KEYWORD") { this.advance(); return { type: "keyword", keyword: t.value }; }
     if (t.type === "LPAREN") {
       this.advance();
       const expr = this.parseOr();
@@ -135,7 +144,7 @@ export function expressionToString(expr: SearchExpression | null): string {
   switch (expr.type) {
     case "term": return expr.term.includes(" ") ? `"${expr.term.replace(/"/g, '\\"')}"` : expr.term;
     case "tag": return `#${expr.tag}`;
-    case "keyword": return expr.keyword;
+    case "keyword": return `!${expr.keyword}`;
     case "and": {
       const left = expressionToString(expr.left);
       const right = expressionToString(expr.right);
@@ -187,7 +196,12 @@ export function compileSearch(ast: SearchExpression | null, opts?: { lax?: boole
         params.push(expr.tag.toLowerCase());
         return "EXISTS (SELECT 1 FROM bookmark_tags bt JOIN tags t ON t.id = bt.tag_id WHERE bt.bookmark_id = bookmarks.id AND LOWER(t.name) = ?)";
       }
-      case "keyword": return termLike(expr.keyword);
+      case "keyword": {
+        const kw = expr.keyword.toLowerCase();
+        if (kw === "untagged") return "NOT EXISTS (SELECT 1 FROM bookmark_tags bt WHERE bt.bookmark_id = bookmarks.id)";
+        if (kw === "unread") return "unread = 1";
+        return "1=1"; // unknown special keyword matches all
+      }
       case "and": return `(${compile(expr.left)} AND ${compile(expr.right)})`;
       case "or": return `(${compile(expr.left)} OR ${compile(expr.right)})`;
       case "not": return `NOT (${compile(expr.operand)})`;
@@ -203,17 +217,26 @@ export function compileSearch(ast: SearchExpression | null, opts?: { lax?: boole
  */
 export function compileLegacySearch(query: string): CompiledSearch | null {
   if (!query || !query.trim()) return null;
-  const terms = query.trim().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return null;
+  const keywords = query.trim().split(/\s+/).filter(Boolean);
 
   const params: unknown[] = [];
   const conditions: string[] = [];
 
-  for (const term of terms) {
-    const p = `%${term.toLowerCase()}%`;
-    params.push(p, p, p, p);
-    conditions.push("(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(notes) LIKE ? OR LOWER(url) LIKE ?)");
+  for (const keyword of keywords) {
+    if (keyword === "!untagged") {
+      conditions.push("NOT EXISTS (SELECT 1 FROM bookmark_tags bt WHERE bt.bookmark_id = bookmarks.id)");
+    } else if (keyword === "!unread") {
+      conditions.push("unread = 1");
+    } else if (keyword[0] === "!") {
+      // Unknown special keyword — ignored in legacy mode
+      continue;
+    } else {
+      const p = `%${keyword.toLowerCase()}%`;
+      params.push(p, p, p, p);
+      conditions.push("(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(notes) LIKE ? OR LOWER(url) LIKE ?)");
+    }
   }
 
+  if (conditions.length === 0) return null;
   return { whereSql: conditions.join(" AND "), params };
 }

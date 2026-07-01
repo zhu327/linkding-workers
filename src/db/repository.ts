@@ -9,6 +9,10 @@ import { parseSearchQuery, compileSearch, compileLegacySearch } from "../service
 
 export { getProfile };
 
+export interface TagWithCount extends TagRow {
+  bookmark_count: number;
+}
+
 // ── Bookmarks ───────────────────────────────────────────────────────
 
 export async function getBookmarkById(db: D1Database, id: number): Promise<BookmarkRow | null> {
@@ -57,6 +61,47 @@ export async function listTags(db: D1Database, limit: number, offset: number): P
 export async function listAllTags(db: D1Database): Promise<TagRow[]> {
   const rows = await db.prepare("SELECT * FROM tags ORDER BY name COLLATE NOCASE").all<TagRow>();
   return rows.results;
+}
+
+export async function countAllTags(db: D1Database): Promise<number> {
+  const r = await db.prepare("SELECT COUNT(*) as cnt FROM tags").first<{ cnt: number }>();
+  return r?.cnt ?? 0;
+}
+
+/** List tags with a per-tag bookmark count, supporting search / sort / unused filtering and pagination. */
+export async function listTagsWithCounts(
+  db: D1Database,
+  opts: { search?: string; sort?: string; unused?: boolean; limit: number; offset: number },
+): Promise<{ count: number; tags: TagWithCount[] }> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (opts.search) {
+    conditions.push("LOWER(t.name) LIKE LOWER(?)");
+    params.push(`%${opts.search}%`);
+  }
+  if (opts.unused) {
+    conditions.push("(SELECT COUNT(*) FROM bookmark_tags bt WHERE bt.tag_id = t.id) = 0");
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const countRow = await db.prepare(`SELECT COUNT(*) as cnt FROM tags t ${where}`).bind(...params).first<{ cnt: number }>();
+  const count = countRow?.cnt ?? 0;
+
+  let orderBy = "t.name COLLATE NOCASE ASC";
+  switch (opts.sort) {
+    case "name-desc": orderBy = "t.name COLLATE NOCASE DESC"; break;
+    case "count-asc": orderBy = "bookmark_count ASC, t.name COLLATE NOCASE ASC"; break;
+    case "count-desc": orderBy = "bookmark_count DESC, t.name COLLATE NOCASE ASC"; break;
+  }
+
+  const rows = await db
+    .prepare(
+      `SELECT t.*, (SELECT COUNT(*) FROM bookmark_tags bt WHERE bt.tag_id = t.id) AS bookmark_count FROM tags t ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
+    )
+    .bind(...params, opts.limit, opts.offset)
+    .all<TagWithCount>();
+
+  return { count, tags: rows.results };
 }
 
 // ── Bundles ─────────────────────────────────────────────────────────

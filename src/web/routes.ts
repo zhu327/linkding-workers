@@ -8,7 +8,7 @@ declare module "hono" {
 }
 import type { BookmarkRow, TagRow, BundleRow, ApiTokenRow, FeedTokenRow } from "../db/schema.js";
 import { getProfile } from "../db/repository.js";
-import { getBookmarkById, getBookmarkTagNames, countBookmarks, listBookmarks, listAllTags, listBundles, getBundleById, listApiTokens, compileBookmarkListQuery } from "../db/repository.js";
+import { getBookmarkById, getBookmarkTagNames, countBookmarks, listBookmarks, listAllTags, listBundles, getBundleById, listApiTokens, compileBookmarkListQuery, listTagsWithCounts, countAllTags } from "../db/repository.js";
 import { webAuth, createSession, setSessionCookie, clearSessionCookie } from "./auth.js";
 import { verifyPassword } from "../services/password.js";
 import { issueCsrf, verifyCsrf, CSRF_COOKIE_NAME } from "./csrf.js";
@@ -325,8 +325,23 @@ webRouter.post("/bookmarks/:id/unarchive", webAuth, async (c) => {
 // ── Tags ────────────────────────────────────────────────────────────
 webRouter.get("/tags", webAuth, async (c) => {
   const profile = await getProfile(c.env.DB);
-  const tags = await listAllTags(c.env.DB);
-  return c.html(layout("Tags", tagsPage(tags), { profile, activeNav: "tags" }));
+  const search = (c.req.query("search") || "").trim();
+  const rawSort = c.req.query("sort") || "name-asc";
+  const sort = ["name-asc", "name-desc", "count-asc", "count-desc"].includes(rawSort) ? rawSort : "name-asc";
+  const unusedOnly = c.req.query("unused") === "true";
+  const rawPage = parseInt(c.req.query("page") || "1", 10);
+  let page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+  const limit = 50;
+  let offset = (page - 1) * limit;
+
+  const total = await countAllTags(c.env.DB);
+  let { count, tags } = await listTagsWithCounts(c.env.DB, { search, sort, unused: unusedOnly, limit, offset });
+  if (tags.length === 0 && count > 0 && page > 1) {
+    page = Math.ceil(count / limit);
+    offset = (page - 1) * limit;
+    ({ count, tags } = await listTagsWithCounts(c.env.DB, { search, sort, unused: unusedOnly, limit, offset }));
+  }
+  return c.html(layout("Tags", tagsPage({ tags, search, sort, unusedOnly, total, count, page, limit }), { profile, activeNav: "tags" }));
 });
 
 webRouter.post("/tags/merge", webAuth, async (c) => {
@@ -357,7 +372,15 @@ webRouter.post("/tags/:id/delete", webAuth, async (c) => {
   const id = parseInt(c.req.param("id") || "", 10);
   await c.env.DB.prepare("DELETE FROM bookmark_tags WHERE tag_id = ?").bind(id).run();
   await c.env.DB.prepare("DELETE FROM tags WHERE id = ?").bind(id).run();
-  return c.redirect("/tags", 302);
+  // Preserve filter / pagination state when returning to the tags list.
+  const form = await getFormData(c);
+  const params = new URLSearchParams();
+  if (form.get("search")) params.set("search", (form.get("search") as string) || "");
+  if (form.get("sort")) params.set("sort", (form.get("sort") as string) || "");
+  if (form.get("unused") === "true") params.set("unused", "true");
+  if (form.get("page")) params.set("page", (form.get("page") as string) || "");
+  const qs = params.toString();
+  return c.redirect(qs ? `/tags?${qs}` : "/tags", 302);
 });
 
 // ── Bundles ─────────────────────────────────────────────────────────

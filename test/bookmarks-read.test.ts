@@ -197,6 +197,46 @@ describe("Boolean-style shared filters", () => {
   });
 });
 
+describe("Special keyword search (!untagged / !unread)", () => {
+  beforeAll(async () => {
+    await setupTestDb(env.DB);
+    await env.DB.prepare("DELETE FROM bookmark_tags").run();
+    await env.DB.prepare("DELETE FROM tags").run();
+    await env.DB.prepare("DELETE FROM bookmarks").run();
+    // untagged, read
+    await seedBookmark("https://untagged.example.com", "No Tags", { date_added: "2024-08-01T00:00:00Z" });
+    // tagged
+    await seedBookmark("https://tagged.example.com", "Has Tags", { tags: ["dev"], date_added: "2024-08-02T00:00:00Z" });
+    // untagged + unread
+    const unreadId = await seedBookmark("https://unread.example.com", "Unread One", { date_added: "2024-08-03T00:00:00Z" });
+    await env.DB.prepare("UPDATE bookmarks SET unread=1 WHERE id=?").bind(unreadId).run();
+  });
+
+  it("q=!untagged returns only bookmarks without tags", async () => {
+    const res = await req("/api/bookmarks?q=!untagged");
+    const body: any = await res.json();
+    const urls = body.results.map((r: any) => r.url);
+    expect(body.count).toBe(2);
+    expect(urls).toContain("https://untagged.example.com");
+    expect(urls).toContain("https://unread.example.com");
+    expect(urls).not.toContain("https://tagged.example.com");
+  });
+
+  it("q=!unread returns only unread bookmarks", async () => {
+    const res = await req("/api/bookmarks?q=!unread");
+    const body: any = await res.json();
+    expect(body.count).toBe(1);
+    expect(body.results[0].url).toBe("https://unread.example.com");
+  });
+
+  it("q=!untagged !unread combines with implicit AND", async () => {
+    const res = await req("/api/bookmarks?q=!untagged !unread");
+    const body: any = await res.json();
+    expect(body.count).toBe(1);
+    expect(body.results[0].url).toBe("https://unread.example.com");
+  });
+});
+
 describe("Service utilities", () => {
   it("normalizeUrl lowercases scheme/host, strips trailing slash, sorts query", async () => {
     const { normalizeUrl } = await import("../src/services/url.js");
