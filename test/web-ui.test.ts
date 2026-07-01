@@ -38,7 +38,7 @@ describe("Web UI — Auth", () => {
     const res = await fetchUrl("/login");
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("linkding");
+    expect(html).toContain("LINKDING");
     expect(html).toContain('type="password"');
   });
 
@@ -200,8 +200,8 @@ describe("Bookmark form — default pre-check from profile", () => {
     const m = cookie.match(/ld_session=([^;]+)/);
     const session = m ? m[1] : "";
 
-    // Set default_mark_shared=1, default_mark_unread=0
-    await env.DB.prepare("UPDATE user_profile SET default_mark_unread=0, default_mark_shared=1 WHERE id=1").run();
+    // Set default_mark_shared=1, default_mark_unread=0, enable sharing so the checkbox renders
+    await env.DB.prepare("UPDATE user_profile SET default_mark_unread=0, default_mark_shared=1, enable_sharing=1 WHERE id=1").run();
 
     const res = await fetchUrl("/bookmarks/new", { headers: { Cookie: `ld_session=${session}` } });
     expect(res.status).toBe(200);

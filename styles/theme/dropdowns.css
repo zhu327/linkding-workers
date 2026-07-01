@@ -1,0 +1,42 @@
+/* Dropdown */
+.dropdown {
+  --dropdown-focus-display: block;
+
+  display: inline-block;
+  position: relative;
+
+  .menu {
+    animation: fade-in 0.15s ease 1;
+    display: none;
+    left: 0;
+    max-height: 50vh;
+    overflow-y: auto;
+    position: absolute;
+    top: 100%;
+  }
+
+  &.dropdown-right {
+    .menu {
+      left: auto;
+      right: 0;
+    }
+  }
+
+  &:focus-within .menu {
+    /* Use custom CSS property to allow disabling opening on focus when using JS */
+    display: var(--dropdown-focus-display);
+  }
+
+  &.active .menu {
+    /* Always show menu when class is added through JS */
+    display: block;
+  }
+
+  /* Fix dropdown-toggle border radius in button groups */
+  .btn-group {
+    .dropdown-toggle:nth-last-child(2) {
+      border-bottom-right-radius: var(--border-radius);
+      border-top-right-radius: var(--border-radius);
+    }
+  }
+}

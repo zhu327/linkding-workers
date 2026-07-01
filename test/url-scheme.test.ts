@@ -336,6 +336,7 @@ describe("View rendering — safeHref prevents executable href", () => {
       count: 1, q: "", sort: "added_desc", offset: 0, limit: 30,
       allTags: [], selectedTag: "", unread: "", shared: "",
       profile, page: "shared", anonymous: true,
+      bundles: [], selectedBundleId: 0,
     });
 
     // Must NOT contain an executable href="javascript:..."
@@ -362,6 +363,7 @@ describe("View rendering — safeHref prevents executable href", () => {
       count: 1, q: "", sort: "added_desc", offset: 0, limit: 30,
       allTags: [], selectedTag: "", unread: "", shared: "",
       profile, page: "shared", anonymous: true,
+      bundles: [], selectedBundleId: 0,
     });
 
     expect(html).toContain('href="https://example.com"');
@@ -384,6 +386,7 @@ describe("View rendering — safeHref prevents executable href", () => {
       count: 1, q: "", sort: "added_desc", offset: 0, limit: 30,
       allTags: [], selectedTag: "", unread: "", shared: "",
       profile, page: "shared", anonymous: true,
+      bundles: [], selectedBundleId: 0,
     });
 
     expect(html).toContain('href="ftp://files.example.com"');

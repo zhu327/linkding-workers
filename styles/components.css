@@ -1,0 +1,116 @@
+/* Shared components */
+
+/* Section header component */
+.section-header {
+  border-bottom: solid 1px var(--secondary-border-color);
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--unit-5);
+  padding-bottom: var(--unit-2);
+  margin-bottom: var(--unit-4);
+
+  h1,
+  h2,
+  h3 {
+    font-size: var(--font-size-lg);
+    flex: 0 0 auto;
+    line-height: var(--unit-9);
+    margin: 0;
+  }
+
+  .header-controls {
+    flex: 1 1 0;
+    display: flex;
+  }
+}
+
+@media (max-width: 600px) {
+  .section-header:not(.no-wrap) {
+    flex-direction: column;
+  }
+}
+
+/* Confirm button component */
+.confirm-dropdown.active {
+  position: fixed;
+  z-index: 500;
+
+  & .menu {
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    gap: var(--unit-2);
+    padding: var(--unit-2);
+    transform: none;
+  }
+}
+
+/* Divider */
+.divider {
+  border-bottom: solid 1px var(--secondary-border-color);
+  margin: var(--unit-5) 0;
+}
+
+/* Turbo progress bar */
+.turbo-progress-bar {
+  background-color: var(--primary-color);
+}
+
+/* Messages */
+.message-list {
+  margin: var(--unit-4) 0;
+
+  .toast {
+    margin-bottom: var(--unit-2);
+  }
+
+  .toast a.btn-clear:visited {
+    color: currentColor;
+  }
+}
+
+/* Item list */
+.item-list {
+  & .list-item {
+    display: flex;
+    align-items: center;
+    gap: var(--unit-2);
+    padding: var(--unit-2) 0;
+    border-top: var(--unit-o) solid var(--secondary-border-color);
+  }
+
+  & .list-item:last-child {
+    border-bottom: var(--unit-o) solid var(--secondary-border-color);
+  }
+
+  & .list-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  & .list-item-text {
+    flex: 1 1 0;
+    gap: var(--unit-2);
+    min-width: 0;
+    display: flex;
+  }
+
+  & .list-item-text .truncate {
+    flex-shrink: 1;
+  }
+
+  & .list-item-actions {
+    display: flex;
+    gap: var(--unit-2);
+    margin-left: var(--unit-4);
+    align-items: center;
+
+    & .btn.btn-link {
+      height: unset;
+      padding: 0;
+      border: none;
+    }
+  }
+}

@@ -1,57 +1,81 @@
 import { esc } from "./layout.js";
 import type { BundleRow } from "../../db/schema.js";
 
-export function bundlesPage(bundles: BundleRow[], editing?: BundleRow): string {
-  const rows = bundles.map((b) =>
-    `<tr>
-      <td><strong>${esc(b.name)}</strong></td>
-      <td>${esc(b.search)}</td>
-      <td>${esc(b.any_tags)}</td>
-      <td>${esc(b.all_tags)}</td>
-      <td>${esc(b.excluded_tags)}</td>
-      <td>${esc(b.filter_unread)}</td>
-      <td>${esc(b.filter_shared)}</td>
-      <td>${b.order}</td>
-      <td>
-        <a href="/bundles?edit=${b.id}" class="btn btn-sm">Edit</a>
-        <form method="POST" action="/bundles/${b.id}/delete" style="display:inline"><button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete?')">Delete</button></form>
-      </td>
-    </tr>`
-  ).join("");
-
-  const formTitle = editing ? `Edit Bundle: ${esc(editing.name)}` : "New Bundle";
-  return `<h1>Bundles</h1>
-<div class="card">
-<h2 style="font-size:1.1rem;margin-bottom:.75rem">${formTitle}</h2>
-<form method="POST" action="${editing ? `/bundles/${editing.id}` : "/bundles"}">
-  <div class="form-group"><label>Name *</label><input type="text" name="name" value="${esc(editing?.name || "")}" class="form-control" required></div>
-  <div class="form-group"><label>Search query</label><input type="text" name="search" value="${esc(editing?.search || "")}" class="form-control"></div>
-  <div class="form-group"><label>Any tags (space-separated, OR)</label><input type="text" name="any_tags" value="${esc(editing?.any_tags || "")}" class="form-control"></div>
-  <div class="form-group"><label>All tags (space-separated, AND)</label><input type="text" name="all_tags" value="${esc(editing?.all_tags || "")}" class="form-control"></div>
-  <div class="form-group"><label>Excluded tags (space-separated)</label><input type="text" name="excluded_tags" value="${esc(editing?.excluded_tags || "")}" class="form-control"></div>
-  <div class="form-group">
-    <label>Filter Unread</label>
-    <select name="filter_unread">
-      <option value="off" ${editing?.filter_unread === "off" ? "selected" : ""}>Off</option>
-      <option value="yes" ${editing?.filter_unread === "yes" ? "selected" : ""}>Yes</option>
-      <option value="no" ${editing?.filter_unread === "no" ? "selected" : ""}>No</option>
-    </select>
-  </div>
-  <div class="form-group">
-    <label>Filter Shared</label>
-    <select name="filter_shared">
-      <option value="off" ${editing?.filter_shared === "off" ? "selected" : ""}>Off</option>
-      <option value="yes" ${editing?.filter_shared === "yes" ? "selected" : ""}>Yes</option>
-      <option value="no" ${editing?.filter_shared === "no" ? "selected" : ""}>No</option>
-    </select>
-  </div>
-  <div class="form-group"><label>Order</label><input type="number" name="order" value="${editing?.order ?? 0}" class="form-control" style="width:100px"></div>
-  <button type="submit" class="btn btn-primary">${editing ? "Update" : "Create"}</button>
-  ${editing ? '<a href="/bundles" class="btn" style="margin-left:.5rem">Cancel</a>' : ""}
-</form>
-</div>
-<div class="card">
-<table><thead><tr><th>Name</th><th>Search</th><th>Any Tags</th><th>All Tags</th><th>Excluded Tags</th><th>Unread</th><th>Shared</th><th>Order</th><th>Actions</th></tr></thead>
-<tbody>${rows || '<tr><td colspan="9" style="color:var(--muted)">No bundles yet.</td></tr>'}</tbody></table>
+function field(name: string, label: string, value: string, help?: string, type = "text"): string {
+  return `<div class="form-group">
+  <label for="${name}" class="form-label">${esc(label)}</label>
+  <input type="${type}" id="${name}" name="${name}" value="${esc(value)}" class="form-input">
+  ${help ? `<p class="form-input-hint">${help}</p>` : ""}
 </div>`;
+}
+
+function selectField(name: string, label: string, value: string, options: [string, string][], help?: string): string {
+  const opts = options.map(([v, l]) => `<option value="${v}"${value === v ? " selected" : ""}>${esc(l)}</option>`).join("");
+  return `<div class="form-group">
+  <label for="${name}" class="form-label">${esc(label)}</label>
+  <select id="${name}" name="${name}" class="form-select">${opts}</select>
+  ${help ? `<p class="form-input-hint">${help}</p>` : ""}
+</div>`;
+}
+
+export function bundlesPage(bundles: BundleRow[], editing?: BundleRow, initialSearch = ""): string {
+  const rows = bundles.map((b) =>
+    `<tr data-bundle-id="${b.id}">
+      <td>
+        <div class="d-flex align-center">
+          <svg class="text-secondary mr-1" width="16" height="16"><use href="/icons.svg#drag"></use></svg>
+          <span>${esc(b.name)}</span>
+        </div>
+      </td>
+      <td class="actions">
+        <a class="btn btn-link" href="/bundles?edit=${b.id}">Edit</a>
+        <form method="post" action="/bundles/${b.id}/delete" class="d-inline">
+          <button data-confirm type="submit" class="btn btn-link text-error">Remove</button>
+        </form>
+      </td>
+    </tr>`).join("");
+
+  const list = bundles.length
+    ? `<table class="table crud-table">
+      <thead><tr><th>Name</th><th class="actions"><span class="text-assistive">Actions</span></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`
+    : `<div class="empty"><p class="empty-title h5">You have no bundles yet</p><p class="empty-subtitle">Create your first bundle to get started</p></div>`;
+
+  const isEdit = !!editing;
+  const heading = isEdit ? "Edit bundle" : "New bundle";
+  const action = isEdit ? `/bundles/${editing!.id}` : "/bundles";
+  const unreadOpts: [string, string][] = [["off", "Off"], ["yes", "Unread only"], ["no", "Read only"]];
+  const sharedOpts: [string, string][] = [["off", "Off"], ["yes", "Shared only"], ["no", "Private only"]];
+
+  const form = `<section aria-labelledby="bundle-form-heading" class="mb-6">
+  <div class="section-header"><h2 id="bundle-form-heading">${esc(heading)}</h2></div>
+  <form id="bundle-form" action="${action}" method="post" novalidate>
+    ${field("name", "Name", editing?.name || "", undefined)}
+    ${field("search", "Search terms", editing?.search || initialSearch, "All of these search terms must be present in a bookmark to match.")}
+    ${field("any_tags", "Tags", editing?.any_tags || "", "At least one of these tags must be present in a bookmark to match.")}
+    ${field("all_tags", "Required tags", editing?.all_tags || "", "All of these tags must be present in a bookmark to match.")}
+    ${field("excluded_tags", "Excluded tags", editing?.excluded_tags || "", "None of these tags must be present in a bookmark to match.")}
+    ${selectField("filter_unread", "Reading State", editing?.filter_unread || "off", unreadOpts, "Limit matches to unread or read bookmarks.")}
+    ${selectField("filter_shared", "Sharing State", editing?.filter_shared || "off", sharedOpts, "Limit matches to shared or unshared bookmarks.")}
+    <div class="form-group">
+      <label for="order" class="form-label">Order</label>
+      <input type="number" id="order" name="order" value="${editing?.order ?? 0}" class="form-input width-25 width-sm-100">
+    </div>
+    <div class="form-footer d-flex mt-4">
+      <input type="submit" name="save" value="Save" class="btn btn-primary btn-wide">
+      <a href="/bundles" class="btn btn-wide ml-auto">Cancel</a>
+    </div>
+  </form>
+</section>`;
+
+  return `<main class="bundles-page crud-page" aria-labelledby="main-heading">
+  <div class="crud-header">
+    <h1 id="main-heading">Bundles</h1>
+    <a href="#bundle-form" class="btn">Add bundle</a>
+  </div>
+  ${isEdit ? form : ""}
+  ${list}
+  ${!isEdit ? form : ""}
+</main>`;
 }

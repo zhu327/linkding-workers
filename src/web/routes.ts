@@ -12,11 +12,11 @@ import { getBookmarkById, getBookmarkTagNames, countBookmarks, listBookmarks, li
 import { webAuth, createSession, setSessionCookie, clearSessionCookie } from "./auth.js";
 import { verifyPassword } from "../services/password.js";
 import { issueCsrf, verifyCsrf, CSRF_COOKIE_NAME } from "./csrf.js";
-import { loginPage } from "./views/login.js";
+import { loginBody } from "./views/login.js";
 import { layout } from "./views/layout.js";
 import { bookmarksListPage } from "./views/bookmarks.js";
 import { bookmarkFormPage } from "./views/bookmark-form.js";
-import { bookmarkDetailPage } from "./views/bookmark-detail.js";
+import { bookmarkDetailPage, bookmarkDetailModal } from "./views/bookmark-detail.js";
 import { tagsPage } from "./views/tags-view.js";
 import { bundlesPage } from "./views/bundles-view.js";
 import { settingsPage } from "./views/settings-view.js";
@@ -71,7 +71,8 @@ async function getFormData(c: AppContext): Promise<FormData> {
 // ── Login / Logout ──────────────────────────────────────────────────
 webRouter.get("/login", async (c) => {
   const csrf = await getCsrfToken(c.env);
-  return c.html(loginPage(csrf));
+  const profile = await getProfile(c.env.DB);
+  return c.html(layout("Login", loginBody(csrf), { profile, anonymous: true, csrfToken: csrf }));
 });
 
 webRouter.post("/login", csrfVerify, async (c) => {
@@ -79,7 +80,8 @@ webRouter.post("/login", csrfVerify, async (c) => {
   const password = form.get("password") as string || "";
   if (!(await verifyPassword(c.env, password))) {
     const csrf = await getCsrfToken(c.env);
-    return c.html(loginPage(csrf, "Invalid password."), 401);
+    const profile = await getProfile(c.env.DB);
+    return c.html(layout("Login", loginBody(csrf, "Invalid password."), { profile, anonymous: true, csrfToken: csrf }), 401);
   }
   const session = await createSession(c.env);
   c.header("Set-Cookie", setSessionCookie(session));
@@ -97,13 +99,30 @@ webRouter.get("/", (c) => c.redirect("/bookmarks", 302));
 async function renderBookmarkList(c: AppContext, page: "bookmarks" | "archived" | "shared"): Promise<Response> {
   const db = c.env.DB;
   const profile = await getProfile(db);
-  const q = c.req.query("q") || "";
-  const sort = c.req.query("sort") || "added_desc";
+  const bundles = await listBundles(db);
+  let q = c.req.query("q") || "";
+  let sort = c.req.query("sort") || "added_desc";
   const offset = Math.max(parseInt(c.req.query("offset") || "0", 10), 0);
   const limit = profile.items_per_page || 30;
-  const selectedTag = c.req.query("tag") || "";
-  const unread = c.req.query("unread") || "";
-  const shared = c.req.query("shared") || "";
+  let selectedTag = c.req.query("tag") || "";
+  let unread = c.req.query("unread") || "";
+  let shared = c.req.query("shared") || "";
+  const bundleId = c.req.query("bundle") || "";
+  let selectedBundleId = 0;
+
+  // Apply bundle filters when a bundle is selected.
+  if (bundleId) {
+    const bundle = await getBundleById(db, parseInt(bundleId, 10));
+    if (bundle) {
+      selectedBundleId = bundle.id;
+      if (bundle.search) q = bundle.search;
+      if (bundle.filter_unread === "yes") unread = "yes";
+      else if (bundle.filter_unread === "no") unread = "no";
+      if (bundle.filter_shared === "yes") shared = "yes";
+      else if (bundle.filter_shared === "no") shared = "no";
+      if (bundle.any_tags) selectedTag = bundle.any_tags.split(/\s+/)[0] || selectedTag;
+    }
+  }
 
   const { where, params, orderBy } = await compileBookmarkListQuery(db, profile, {
     q, sort, unread, shared, selectedTag, page,
@@ -119,7 +138,7 @@ async function renderBookmarkList(c: AppContext, page: "bookmarks" | "archived" 
   }));
 
   const anonymous = c.get("anonymous") as boolean;
-  const body = bookmarksListPage({ bookmarks, count, q, sort, offset, limit, allTags, selectedTag, unread, shared, profile, page, anonymous });
+  const body = bookmarksListPage({ bookmarks, count, q, sort, offset, limit, allTags, selectedTag, unread, shared, profile, page, anonymous, bundles, selectedBundleId });
   return c.html(layout(page === "archived" ? "Archived" : page === "shared" ? "Shared" : "Bookmarks", body, { profile, activeNav: page, anonymous }));
 }
 
@@ -135,12 +154,42 @@ webRouter.get("/bookmarks/shared", async (c, next) => {
 }, (c) => renderBookmarkList(c, "shared"));
 
 // ── Bulk actions (web) ──────────────────────────────────────────────
+webRouter.get("/autocomplete/tags", webAuth, async (c) => {
+  const tags = await listAllTags(c.env.DB);
+  return c.json(tags.map((tag) => ({ name: tag.name })));
+});
+
+webRouter.get("/autocomplete/bookmarks", webAuth, async (c) => {
+  const profile = await getProfile(c.env.DB);
+  const q = c.req.query("q") || "";
+  if (q.trim().length < 2) return c.json([]);
+
+  const { where, params, orderBy } = await compileBookmarkListQuery(c.env.DB, profile, {
+    q,
+    sort: "added_desc",
+    page: "bookmarks",
+  });
+  const rows = await listBookmarks(c.env.DB, where, params, orderBy, 5, 0);
+  return c.json(rows.map((row) => ({ id: row.id, title: row.title || row.url, url: row.url })));
+});
+
 webRouter.post("/bookmarks/bulk", webAuth, async (c) => {
   const form = await getFormData(c);
-  const action = (form.get("bulk_action") as string) || "";
-  const rawIds = form.getAll("bookmark_id").map((v) => parseInt(String(v), 10)).filter((n) => !isNaN(n));
   const tagString = (form.get("bulk_tag_string") as string) || "";
 
+  // Single-item actions submitted via the wrapping bookmark-actions form.
+  const singleId = (name: string) => parseInt(String(form.get(name) || ""), 10);
+  if (!isNaN(singleId("archive"))) { await setArchived(c.env.DB, singleId("archive"), true); return c.redirect("/bookmarks", 302); }
+  if (!isNaN(singleId("unarchive"))) { await setArchived(c.env.DB, singleId("unarchive"), false); return c.redirect("/bookmarks/archived", 302); }
+  if (!isNaN(singleId("remove"))) { await deleteBookmark(c.env.DB, singleId("remove")); return c.redirect("/bookmarks", 302); }
+  if (!isNaN(singleId("mark_as_read"))) { await bulkMarkRead(c.env.DB, [singleId("mark_as_read")]); return c.redirect("/bookmarks", 302); }
+  if (!isNaN(singleId("mark_as_unread"))) { await bulkMarkUnread(c.env.DB, [singleId("mark_as_unread")]); return c.redirect("/bookmarks", 302); }
+  if (!isNaN(singleId("share"))) { await bulkShare(c.env.DB, [singleId("share")]); return c.redirect("/bookmarks", 302); }
+  if (!isNaN(singleId("unshare"))) { await bulkUnshare(c.env.DB, [singleId("unshare")]); return c.redirect("/bookmarks", 302); }
+
+  // Bulk actions.
+  const action = (form.get("bulk_action") as string) || "";
+  const rawIds = form.getAll("bookmark_id").map((v) => parseInt(String(v), 10)).filter((n) => !isNaN(n));
   if (rawIds.length > 0) {
     const tagNames = parseTagString(tagString);
     switch (action) {
@@ -153,10 +202,10 @@ webRouter.post("/bookmarks/bulk", webAuth, async (c) => {
       case "bulk_delete":
         await bulkDelete(c.env.DB, rawIds);
         break;
-      case "bulk_mark_read":
+      case "bulk_read":
         await bulkMarkRead(c.env.DB, rawIds);
         break;
-      case "bulk_mark_unread":
+      case "bulk_unread":
         await bulkMarkUnread(c.env.DB, rawIds);
         break;
       case "bulk_share":
@@ -212,6 +261,14 @@ webRouter.get("/bookmarks/:id", webAuth, async (c) => {
   if (!row) return c.redirect("/bookmarks", 302);
   const profile = await getProfile(c.env.DB);
   const tagNames = await getBookmarkTagNames(c.env.DB, id);
+  const modal = c.req.query("modal") === "1";
+
+  if (modal) {
+    // Return modal HTML only (for AJAX injection)
+    return c.html(bookmarkDetailModal({ bookmark: row, tagNames, profile }));
+  }
+
+  // Full page view
   const body = bookmarkDetailPage({ bookmark: row, tagNames, profile });
   return c.html(layout(row.title || "Bookmark", body, { profile, activeNav: "bookmarks" }));
 });
@@ -310,7 +367,7 @@ webRouter.get("/bundles", webAuth, async (c) => {
   const editId = c.req.query("edit");
   let editing: BundleRow | undefined;
   if (editId) editing = (await getBundleById(c.env.DB, parseInt(editId, 10))) || undefined;
-  return c.html(layout("Bundles", bundlesPage(bundles, editing), { profile, activeNav: "bundles" }));
+  return c.html(layout("Bundles", bundlesPage(bundles, editing, c.req.query("q") || ""), { profile, activeNav: "bundles" }));
 });
 
 webRouter.post("/bundles", webAuth, async (c) => {
@@ -369,7 +426,7 @@ webRouter.get("/settings", webAuth, async (c) => {
 webRouter.post("/settings", webAuth, csrfVerify, async (c) => {
   const form = await getFormData(c);
   await c.env.DB.prepare(
-    "UPDATE user_profile SET theme=?, items_per_page=?, enable_sharing=?, enable_favicons=?, tag_search=?, web_archive_integration=?, custom_css=?, default_mark_unread=?, default_mark_shared=?, enable_public_sharing=? WHERE id=1"
+    "UPDATE user_profile SET theme=?, items_per_page=?, enable_sharing=?, enable_favicons=?, tag_search=?, web_archive_integration=?, custom_css=?, auto_tagging_rules=?, default_mark_unread=?, default_mark_shared=?, enable_public_sharing=? WHERE id=1"
   ).bind(
     form.get("theme") as string || "auto",
     parseInt(form.get("items_per_page") as string || "30", 10),
@@ -378,6 +435,7 @@ webRouter.post("/settings", webAuth, csrfVerify, async (c) => {
     form.get("tag_search") as string || "strict",
     form.get("web_archive_integration") as string || "disabled",
     form.get("custom_css") as string || "",
+    form.get("auto_tagging_rules") as string || "",
     form.get("default_mark_unread") === "1" ? 1 : 0,
     form.get("default_mark_shared") === "1" ? 1 : 0,
     form.get("enable_public_sharing") === "1" ? 1 : 0,

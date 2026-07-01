@@ -10,11 +10,3 @@ export function formatDate(iso: string): string {
     return iso;
   }
 }
-
-export function unreadBadge(unread: boolean | number): string {
-  return unread ? ' <span class="tag" style="background:var(--accent);color:#fff">unread</span>' : "";
-}
-
-export function sharedBadge(shared: boolean | number): string {
-  return shared ? ' <span class="tag" style="background:var(--success);color:#fff">shared</span>' : "";
-}

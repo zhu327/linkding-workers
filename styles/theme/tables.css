@@ -1,0 +1,23 @@
+/* Tables */
+.table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  width: 100%;
+  text-align: left;
+
+  td,
+  th {
+    border-bottom: var(--border-width) solid var(--secondary-border-color);
+    padding: var(--unit-2) var(--unit-2);
+  }
+
+  th {
+    font-weight: 500;
+    border-bottom-color: var(--border-color);
+  }
+
+  th:first-child,
+  td:first-child {
+    padding-left: 0;
+  }
+}

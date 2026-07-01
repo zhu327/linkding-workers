@@ -148,23 +148,23 @@ describe("bookmarkDetailPage — rendering", () => {
       tagNames: [],
       profile: makeProfile(),
     });
-    expect(htmlArchived.toLowerCase()).toContain("archived");
+    expect(htmlArchived).toContain('disabled checked><i class="form-icon"></i> Archived');
 
     const htmlActive = bookmarkDetailPage({
       bookmark: makeBookmark({ is_archived: 0 }),
       tagNames: [],
       profile: makeProfile(),
     });
-    expect(htmlActive.toLowerCase()).toContain("active");
+    expect(htmlActive).not.toContain('disabled checked><i class="form-icon"></i> Archived');
   });
 
-  it("has Back to list link", () => {
+  it("renders the bookmark URL", () => {
     const html = bookmarkDetailPage({
-      bookmark: makeBookmark(),
+      bookmark: makeBookmark({ url: "https://example.com" }),
       tagNames: [],
       profile: makeProfile(),
     });
-    expect(html).toMatch(/href="\/bookmarks"/);
+    expect(html).toContain("https://example.com");
   });
 });
 
@@ -187,20 +187,20 @@ describe("bookmarkDetailPage — action buttons", () => {
     expect(html).toContain("Delete");
   });
 
-  it("shows Archive/Unarchive button when authenticated", () => {
+  it("shows Archived status checkbox when authenticated", () => {
     const htmlNotArchived = bookmarkDetailPage({
       bookmark: makeBookmark({ is_archived: 0 }),
       tagNames: [],
       profile: makeProfile(),
     });
-    expect(htmlNotArchived).toContain("Archive");
+    expect(htmlNotArchived).toContain("Archived");
 
     const htmlArchived = bookmarkDetailPage({
       bookmark: makeBookmark({ is_archived: 1 }),
       tagNames: [],
       profile: makeProfile(),
     });
-    expect(htmlArchived).toContain("Unarchive");
+    expect(htmlArchived).toContain("Archived");
   });
 
   it("hides Edit/Delete/Archive buttons when anonymous", () => {
@@ -245,6 +245,7 @@ describe("List page — notes rendering", () => {
       count: 1, q: "", sort: "added_desc", offset: 0, limit: 30,
       allTags: [], selectedTag: "", unread: "", shared: "",
       profile: defaultProfile, page: "bookmarks",
+      bundles: [], selectedBundleId: 0,
     });
   }
 
@@ -260,11 +261,11 @@ describe("List page — notes rendering", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("truncates long notes to ~300 chars before rendering", () => {
+  it("renders full notes without truncation", () => {
     const longNotes = "A".repeat(500);
     const html = listWithNotes(longNotes);
-    // 500 raw A's should not appear in output
-    expect(html).not.toContain("A".repeat(500));
+    // Notes are shown in full (scrollable container), not truncated.
+    expect(html).toContain(longNotes);
   });
 });
 

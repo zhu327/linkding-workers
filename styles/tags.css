@@ -1,0 +1,12 @@
+.tags-editor-page {
+  main {
+    max-width: 550px;
+    margin: 0 auto;
+  }
+}
+
+.tag-edit-modal {
+  .modal-container {
+    max-width: 400px;
+  }
+}

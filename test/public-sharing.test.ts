@@ -190,7 +190,7 @@ describe("Public Sharing — settings UI", () => {
     const profile = makeProfile({ enable_sharing: 1, enable_public_sharing: 0 });
     const html = settingsPage({ profile, tokens: [] });
     expect(html).toContain('name="enable_public_sharing"');
-    expect(html).toContain("Enable public sharing");
+    expect(html).toContain("Enable public bookmark sharing");
   });
 
   it("checkbox is checked when enable_public_sharing=1", () => {
@@ -305,6 +305,7 @@ describe("Public Sharing — bookmarksListPage anonymous mode", () => {
       count: 1, q: "", sort: "added_desc", offset: 0, limit: 30,
       allTags: [], selectedTag: "", unread: "", shared: "",
       profile, page: "shared", anonymous: true,
+      bundles: [], selectedBundleId: 0,
     });
     expect(html).not.toContain('name="bookmark_id"');
     expect(html).not.toContain("bulk-action-bar");
@@ -327,12 +328,13 @@ describe("Public Sharing — layout anonymous mode", () => {
   });
 
   it("non-anonymous layout shows full nav", () => {
-    const profile = makeProfile();
+    const profile = makeProfile({ enable_sharing: 1 });
     const html = layout("Bookmarks", "<p>body</p>", { profile, activeNav: "bookmarks" });
-    expect(html).toContain(">Bookmarks</a>");
+    expect(html).toContain("Bookmarks");
     expect(html).toContain(">Archived</a>");
     expect(html).toContain(">Shared</a>");
-    expect(html).toContain(">Settings</a>");
+    expect(html).toContain("Settings");
+    expect(html).toContain("/logout");
   });
 });
 

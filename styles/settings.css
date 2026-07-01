@@ -1,0 +1,32 @@
+.settings-page {
+  h1 {
+    font-size: var(--font-size-xl);
+    margin-bottom: var(--unit-6);
+  }
+
+  section {
+    margin-bottom: var(--unit-10);
+
+    h2 {
+      font-size: var(--font-size-lg);
+      margin-bottom: var(--unit-4);
+    }
+  }
+
+  textarea.monospace {
+    font-family: monospace;
+    box-sizing: border-box;
+  }
+
+  .input-group > input[type="submit"] {
+    height: auto;
+  }
+
+  section.about table {
+    max-width: 400px;
+  }
+
+  & .form-group {
+    margin-bottom: var(--unit-4);
+  }
+}

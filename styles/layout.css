@@ -1,0 +1,29 @@
+/* Main layout */
+body {
+  margin: 20px 10px;
+
+  @media (min-width: 600px) {
+    /* Horizontal offset accounts for checkboxes that show up in bulk edit mode */
+    margin: 20px 32px;
+  }
+}
+
+header {
+  margin-bottom: var(--unit-9);
+
+  a.app-link:hover {
+    text-decoration: none;
+  }
+
+  .app-logo {
+    width: 28px;
+    height: 28px;
+  }
+
+  .app-name {
+    margin-left: var(--unit-3);
+    font-size: var(--font-size-lg);
+    font-weight: 500;
+    line-height: 1.2;
+  }
+}

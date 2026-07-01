@@ -485,7 +485,7 @@ describe("POST /bookmarks/bulk — web route", () => {
 
     const form = new FormData();
     form.append("_csrf", csrfToken);
-    form.append("bulk_action", "bulk_mark_read");
+    form.append("bulk_action", "bulk_read");
     for (const id of ids) form.append("bookmark_id", String(id));
 
     const res = await webReq("/bookmarks/bulk", {
@@ -508,7 +508,7 @@ describe("POST /bookmarks/bulk — web route", () => {
 
     const form = new FormData();
     form.append("_csrf", csrfToken);
-    form.append("bulk_action", "bulk_mark_unread");
+    form.append("bulk_action", "bulk_unread");
     for (const id of ids) form.append("bookmark_id", String(id));
 
     const res = await webReq("/bookmarks/bulk", {
@@ -623,23 +623,22 @@ describe("POST /bookmarks/bulk — web route", () => {
 
 // ── UI tests ─────────────────────────────────────────────────────────
 
-describe("Bulk Action Bar UI", () => {
-  it("bulkActionBar returns HTML with action dropdown and Apply button", async () => {
-    const { bulkActionBar } = await import("../src/web/views/bulk-actions.js");
-    const html = bulkActionBar();
-    expect(html).toContain("<form");
-    expect(html).toContain('action="/bookmarks/bulk"');
+describe("Bulk Edit Bar UI", () => {
+  it("bulkEditBar returns HTML with action dropdown and Execute button", async () => {
+    const { bulkEditBar } = await import("../src/web/views/bulk-actions.js");
+    const profile: any = { enable_sharing: 1 };
+    const html = bulkEditBar(profile, 0);
     expect(html).toContain('name="bulk_action"');
     expect(html).toContain("Archive");
     expect(html).toContain("Unarchive");
     expect(html).toContain("Delete");
-    expect(html).toContain("Tag");
-    expect(html).toContain("Untag");
-    expect(html).toContain("Mark Read");
-    expect(html).toContain("Mark Unread");
+    expect(html).toContain("Add tags");
+    expect(html).toContain("Remove tags");
+    expect(html).toContain("Mark as read");
+    expect(html).toContain("Mark as unread");
     expect(html).toContain("Share");
     expect(html).toContain("Unshare");
-    expect(html).toContain("Apply");
+    expect(html).toContain("Execute");
     expect(html).toContain('name="bulk_tag_string"');
   });
 });
@@ -662,6 +661,7 @@ describe("Bookmark list checkboxes", () => {
     const html = bookmarksListPage({
       bookmarks, count: 2, q: "", sort: "added_desc", offset: 0, limit: 30,
       allTags: [], selectedTag: "", unread: "", shared: "", profile, page: "bookmarks",
+      bundles: [], selectedBundleId: 0,
     });
 
     // Checkboxes with value matching bookmark ID
