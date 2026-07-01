@@ -1,0 +1,16 @@
+name = "linkding-workers"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "linkding-workers"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[assets]
+directory = "public"
+
+[vars]
+SESSION_SECRET = "test-session-secret-for-testing-only"
+APP_PASSWORD_HASH = "13d249f2cb4127b40cfa757866850278793f814ded3c587fe5889e889a7a9f6c"
