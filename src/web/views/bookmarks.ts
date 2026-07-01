@@ -23,7 +23,7 @@ function bookmarkItem(bm: BookmarkViewModel, profile: UserProfileRow, basePath: 
   const favicon = showFavicons ? (row.favicon_url || deriveFaviconUrl(row.url)) : "";
   const classes = [row.unread ? "unread" : "", row.shared ? "shared" : ""].filter(Boolean).join(" ");
   const tagsHtml = tagNames.length
-    ? `<div class="tags">${tagNames.map((t) => tagLink(basePath, t)).join("")}</div>`
+    ? `<div class="tags">${tagNames.map((t) => tagLink(basePath, t)).join("\n")}</div>`
     : "";
   const descHtml = row.description ? `<div class="description separate">${esc(row.description)}</div>` : "";
   const notesHtml = row.notes ? `<div class="notes"><div class="markdown">${renderMarkdown(row.notes)}</div></div>` : "";
@@ -185,7 +185,7 @@ function tagSection(allTags: TagRow[], selectedTag: string, basePath: string, au
     ? `<p class="selected-tags"><a href="${basePath}" class="text-bold mr-2"><span>-${esc(selectedTag)}</span></a></p>`
     : "";
   const tags = allTags.length
-    ? `<div class="unselected-tags"><p class="group">${allTags.map((t) => `<a href="${basePath}?tag=${encodeURIComponent(t.name)}" class="mr-2"><span>${esc(t.name)}</span></a>`).join("")}</p></div>`
+    ? `<div class="unselected-tags"><p class="group">${allTags.map((t) => `<a href="${basePath}?tag=${encodeURIComponent(t.name)}" class="mr-2"><span>${esc(t.name)}</span></a>`).join("\n")}</p></div>`
     : `<div class="unselected-tags"><p class="group"></p></div>`;
   const menu = authenticated
     ? `<div class="dropdown dropdown-right ml-auto">

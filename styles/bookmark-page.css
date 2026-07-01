@@ -269,6 +269,12 @@ ul.bookmark-list {
       & a:not(:last-child) {
         margin-right: var(--unit-1);
       }
+
+      /* Keep a single tag (e.g. "system-design") on one line. Wrapping happens
+         between tags via the whitespace between adjacent <a> elements. */
+      & a {
+        white-space: nowrap;
+      }
     }
 
     & .actions,
@@ -384,6 +390,12 @@ ul.bookmark-list {
     & a,
     & a:visited:hover {
       color: var(--alternative-color);
+    }
+
+    /* Keep a single tag (e.g. "system-design") on one line. Wrapping happens
+       between tags via the whitespace between adjacent <a> elements. */
+    & a {
+      white-space: nowrap;
     }
   }
 
