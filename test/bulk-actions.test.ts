@@ -399,6 +399,101 @@ describe("POST /bookmarks/bulk — web route", () => {
     }
   });
 
+  it("preserves bookmark list filters and offset after bulk actions", async () => {
+    const ids = await seedBookmarks(1);
+    const { session, csrfToken, csrfCookie } = await getAuthSession();
+
+    const form = new FormData();
+    form.append("_csrf", csrfToken);
+    form.append("bulk_action", "bulk_archive");
+    form.append("bookmark_id", String(ids[0]));
+    form.append("base_path", "/bookmarks");
+    form.append("offset", "30");
+    form.append("q", "foo bar");
+    form.append("sort", "title_asc");
+    form.append("tag", "work");
+    form.append("unread", "no");
+    form.append("shared", "yes");
+    form.append("bundle", "1");
+
+    const res = await webReq("/bookmarks/bulk", {
+      method: "POST",
+      body: form,
+      session,
+      csrfCookie,
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/bookmarks?offset=30&q=foo+bar&sort=title_asc&tag=work&unread=no&shared=yes&bundle=1");
+  });
+
+  it("rejects malicious return base_path", async () => {
+    const ids = await seedBookmarks(1);
+    const { session, csrfToken, csrfCookie } = await getAuthSession();
+
+    const form = new FormData();
+    form.append("_csrf", csrfToken);
+    form.append("bulk_action", "bulk_archive");
+    form.append("bookmark_id", String(ids[0]));
+    form.append("base_path", "https://evil.example");
+    form.append("q", "safe");
+
+    const res = await webReq("/bookmarks/bulk", {
+      method: "POST",
+      body: form,
+      session,
+      csrfCookie,
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/bookmarks?q=safe");
+  });
+
+  it("preserves zero-valued bookmark list filters", async () => {
+    const ids = await seedBookmarks(1);
+    const { session, csrfToken, csrfCookie } = await getAuthSession();
+
+    const form = new FormData();
+    form.append("_csrf", csrfToken);
+    form.append("bulk_action", "bulk_archive");
+    form.append("bookmark_id", String(ids[0]));
+    form.append("base_path", "/bookmarks");
+    form.append("q", "0");
+    form.append("tag", "0");
+    form.append("unread", "0");
+    form.append("shared", "0");
+
+    const res = await webReq("/bookmarks/bulk", {
+      method: "POST",
+      body: form,
+      session,
+      csrfCookie,
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/bookmarks?q=0&tag=0&unread=0&shared=0");
+  });
+
+  it("keeps archived-list fallback when single unarchive form has no return state", async () => {
+    const ids = await seedBookmarks(1);
+    await env.DB.prepare("UPDATE bookmarks SET is_archived = 1").run();
+    const { session, csrfToken, csrfCookie } = await getAuthSession();
+
+    const form = new FormData();
+    form.append("_csrf", csrfToken);
+    form.append("unarchive", String(ids[0]));
+
+    const res = await webReq("/bookmarks/bulk", {
+      method: "POST",
+      body: form,
+      session,
+      csrfCookie,
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/bookmarks/archived");
+  });
+
   it("deletes selected bookmarks", async () => {
     const ids = await seedBookmarks(3);
     const { session, csrfToken, csrfCookie } = await getAuthSession();

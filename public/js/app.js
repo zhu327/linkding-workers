@@ -426,6 +426,19 @@
         var modal = modals.querySelector(".modal.active");
         if (!modal) return;
         document.body.classList.add("scroll-lock");
+        // Copy list-page filter hidden fields into modal forms so redirects preserve pagination.
+        var listForm = document.querySelector(".bookmark-actions");
+        if (listForm) {
+          var hiddenFields = listForm.querySelectorAll("[data-return-param]");
+          modal.querySelectorAll("form").forEach(function (mForm) {
+            hiddenFields.forEach(function (field) {
+              if (!mForm.querySelector("input[name='" + field.name + "']")) {
+                var clone = field.cloneNode(true);
+                mForm.appendChild(clone);
+              }
+            });
+          });
+        }
         // Focus first focusable element in modal
         var firstFocusable = modal.querySelector("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
         if (firstFocusable) firstFocusable.focus();
@@ -454,14 +467,25 @@
     if (!modal) return;
     modal.classList.add("closing");
     var sourceElement = modal._sourceElement;
+    var closeDelay = modal.classList.contains("drawer") ? 250 : 150;
     setTimeout(function () {
+      // If this is the mobile filter drawer, move the side-panel children back
+      // before removing the drawer so the filters are not lost. This also
+      // covers closing via the Escape key, which routes here directly.
+      if (modal.classList.contains("drawer")) {
+        var body = modal.querySelector(".modal-body");
+        var sidePanel = document.querySelector(".side-panel");
+        if (body && sidePanel) {
+          while (body.firstChild) sidePanel.appendChild(body.firstChild);
+        }
+      }
       modal.remove();
       document.body.classList.remove("scroll-lock");
       // Restore focus to source element
       if (sourceElement && document.body.contains(sourceElement)) {
         sourceElement.focus();
       }
-    }, 150); // Match fade-out animation duration
+    }, closeDelay); // Match fade-out animation duration
   }
 
   // Focus trap for modal
@@ -494,8 +518,8 @@
     drawer.className = "modal drawer active";
     drawer.innerHTML =
       '<div class="modal-overlay" data-close-modal></div>' +
-      '<div class="modal-container" role="dialog" aria-modal="true">' +
-      '<div class="modal-header"><h2 class="title">Filters</h2>' +
+      '<div class="modal-container" role="dialog" aria-modal="true" aria-labelledby="filter-drawer-title">' +
+      '<div class="modal-header"><h2 class="title" id="filter-drawer-title">Filters</h2>' +
       '<button class="btn btn-noborder close" aria-label="Close dialog" data-close-modal>\u2715</button></div>' +
       '<div class="modal-body"></div></div>';
     modals.appendChild(drawer);
@@ -503,12 +527,12 @@
     // Move side panel children into the drawer body.
     while (sidePanel.firstChild) body.appendChild(sidePanel.firstChild);
     document.body.classList.add("scroll-lock");
-    function close() {
-      while (body.firstChild) sidePanel.appendChild(body.firstChild);
-      drawer.remove();
-      document.body.classList.remove("scroll-lock");
-    }
-    drawer.querySelectorAll("[data-close-modal]").forEach(function (b) { b.addEventListener("click", close); });
+    drawer._sourceElement = trigger.querySelector("button") || trigger;
+    // Closing is handled by the shared [data-close-modal] / Escape handlers,
+    // which call closeModal() — that moves the side-panel children back and
+    // restores focus to the Filters trigger.
+    var firstFocusable = drawer.querySelector("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+    if (firstFocusable) firstFocusable.focus();
   });
 
   // ── Bulk edit select-all ────────────────────────────────────────

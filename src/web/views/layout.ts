@@ -104,7 +104,7 @@ export function layout(title: string, bodyHtml: string, opts?: LayoutOpts): stri
 <link rel="manifest" href="/manifest.json">
 <link rel="search" type="application/opensearchdescription+xml" title="Linkding" href="/opensearch.xml">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, minimal-ui">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Self-hosted bookmark service">
 <title>${esc(title)}</title>
     ${themeLinks(theme)}

@@ -113,4 +113,17 @@
   .columns-sm-2 {
     --grid-columns: 2;
   }
+
+  /* Inline form rows (e.g. "input + submit") wrap onto a single column so
+     neither control gets squeezed on phones. */
+  form.d-flex.gap-2 {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--unit-2);
+  }
+
+  form.d-flex.gap-2 > .btn,
+  form.d-flex.gap-2 > input[type="submit"] {
+    width: 100%;
+  }
 }

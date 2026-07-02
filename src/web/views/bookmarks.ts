@@ -251,6 +251,14 @@ export function bookmarksListPage(opts: {
       </div>
     </div>
     <form class="bookmark-actions" action="/bookmarks/bulk" method="post" autocomplete="off">
+      <input data-return-param type="hidden" name="base_path" value="${esc(basePath)}">
+      ${offset > 0 ? `<input data-return-param type="hidden" name="offset" value="${offset}">` : ""}
+      ${q ? `<input data-return-param type="hidden" name="q" value="${esc(q)}">` : ""}
+      ${sort && sort !== "added_desc" ? `<input data-return-param type="hidden" name="sort" value="${esc(sort)}">` : ""}
+      ${selectedTag ? `<input data-return-param type="hidden" name="tag" value="${esc(selectedTag)}">` : ""}
+      ${unread ? `<input data-return-param type="hidden" name="unread" value="${esc(unread)}">` : ""}
+      ${shared ? `<input data-return-param type="hidden" name="shared" value="${esc(shared)}">` : ""}
+      ${selectedBundleId ? `<input data-return-param type="hidden" name="bundle" value="${selectedBundleId}">` : ""}
       ${bulkEditEnabled ? bulkEditBar(profile, count) : ""}
       <div id="bookmark-list-container">${listHtml}</div>
     </form>

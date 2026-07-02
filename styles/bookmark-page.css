@@ -208,6 +208,16 @@ ul.bookmark-list {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+
+      /* On mobile allow the title to wrap onto a second line instead of being
+         truncated to a single, often unreadable line. */
+      @media (max-width: 600px) {
+        white-space: normal;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+      }
     }
 
     & .title a[data-tooltip]:hover::after,
@@ -296,6 +306,10 @@ ul.bookmark-list {
       color: var(--bookmark-actions-color);
       font-size: var(--font-size-sm);
 
+      @media (max-width: 600px) {
+        row-gap: var(--unit-1);
+      }
+
       & a,
       & button.btn-link {
         color: var(--bookmark-actions-color);
@@ -308,6 +322,14 @@ ul.bookmark-list {
         box-sizing: border-box;
         transition: none;
         text-decoration: none;
+
+        /* Larger, easier-to-tap action targets on touch screens. */
+        @media (max-width: 600px) {
+          padding: var(--unit-1) 0;
+          min-height: 32px;
+          display: inline-flex;
+          align-items: center;
+        }
 
         &:focus,
         &:hover,
