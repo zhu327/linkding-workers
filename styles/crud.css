@@ -62,4 +62,22 @@
       margin-right: var(--unit-2);
     }
   }
+
+  /* On narrow screens let the table scroll horizontally instead of heavily
+     truncating cell contents. */
+  @media (max-width: 600px) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+
+    th,
+    td,
+    th.actions,
+    td.actions {
+      max-width: none;
+      overflow: visible;
+      text-overflow: clip;
+    }
+  }
 }

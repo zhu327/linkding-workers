@@ -26,4 +26,11 @@ header {
     font-weight: 500;
     line-height: 1.2;
   }
+
+  /* On very narrow screens hide the wordmark to keep the header uncluttered. */
+  @media (max-width: 360px) {
+    .app-name {
+      display: none;
+    }
+  }
 }

@@ -68,6 +68,26 @@ async function getFormData(c: AppContext): Promise<FormData> {
   return await c.req.formData();
 }
 
+const bookmarkReturnPaths = new Set(["/bookmarks", "/bookmarks/archived", "/bookmarks/shared"]);
+const bookmarkReturnParams = ["offset", "q", "sort", "tag", "unread", "shared", "bundle"] as const;
+
+// Build a redirect URL that preserves list-page filter/pagination state from hidden form fields.
+function returnTo(form: FormData, fallback = "/bookmarks"): string {
+  const requestedBasePath = String(form.get("base_path") || "");
+  const basePath = bookmarkReturnPaths.has(requestedBasePath) ? requestedBasePath : fallback;
+  const params = new URLSearchParams();
+  for (const key of bookmarkReturnParams) {
+    const val = form.get(key);
+    if (val === null) continue;
+    const value = String(val);
+    if (value === "") continue;
+    if (key === "offset" && value === "0") continue;
+    params.set(key, value);
+  }
+  const qs = params.toString();
+  return qs ? `${basePath}?${qs}` : basePath;
+}
+
 // ── Login / Logout ──────────────────────────────────────────────────
 webRouter.get("/login", async (c) => {
   const csrf = await getCsrfToken(c.env);
@@ -102,7 +122,7 @@ async function renderBookmarkList(c: AppContext, page: "bookmarks" | "archived" 
   const bundles = await listBundles(db);
   let q = c.req.query("q") || "";
   let sort = c.req.query("sort") || "added_desc";
-  const offset = Math.max(parseInt(c.req.query("offset") || "0", 10), 0);
+  let offset = Math.max(parseInt(c.req.query("offset") || "0", 10), 0);
   const limit = profile.items_per_page || 30;
   let selectedTag = c.req.query("tag") || "";
   let unread = c.req.query("unread") || "";
@@ -129,7 +149,12 @@ async function renderBookmarkList(c: AppContext, page: "bookmarks" | "archived" 
   });
 
   const count = await countBookmarks(db, where, params);
-  const rows = await listBookmarks(db, where, params, orderBy, limit, offset);
+  let rows = await listBookmarks(db, where, params, orderBy, limit, offset);
+  // Clamp offset if current page is empty but results exist (e.g. after deleting last item on a page).
+  if (rows.length === 0 && count > 0 && offset > 0) {
+    offset = (Math.ceil(count / limit) - 1) * limit;
+    rows = await listBookmarks(db, where, params, orderBy, limit, offset);
+  }
   const allTags = await listAllTags(db);
 
   const bookmarks = await Promise.all(rows.map(async (row) => {
@@ -179,13 +204,13 @@ webRouter.post("/bookmarks/bulk", webAuth, async (c) => {
 
   // Single-item actions submitted via the wrapping bookmark-actions form.
   const singleId = (name: string) => parseInt(String(form.get(name) || ""), 10);
-  if (!isNaN(singleId("archive"))) { await setArchived(c.env.DB, singleId("archive"), true); return c.redirect("/bookmarks", 302); }
-  if (!isNaN(singleId("unarchive"))) { await setArchived(c.env.DB, singleId("unarchive"), false); return c.redirect("/bookmarks/archived", 302); }
-  if (!isNaN(singleId("remove"))) { await deleteBookmark(c.env.DB, singleId("remove")); return c.redirect("/bookmarks", 302); }
-  if (!isNaN(singleId("mark_as_read"))) { await bulkMarkRead(c.env.DB, [singleId("mark_as_read")]); return c.redirect("/bookmarks", 302); }
-  if (!isNaN(singleId("mark_as_unread"))) { await bulkMarkUnread(c.env.DB, [singleId("mark_as_unread")]); return c.redirect("/bookmarks", 302); }
-  if (!isNaN(singleId("share"))) { await bulkShare(c.env.DB, [singleId("share")]); return c.redirect("/bookmarks", 302); }
-  if (!isNaN(singleId("unshare"))) { await bulkUnshare(c.env.DB, [singleId("unshare")]); return c.redirect("/bookmarks", 302); }
+  if (!isNaN(singleId("archive"))) { await setArchived(c.env.DB, singleId("archive"), true); return c.redirect(returnTo(form), 302); }
+  if (!isNaN(singleId("unarchive"))) { await setArchived(c.env.DB, singleId("unarchive"), false); return c.redirect(returnTo(form, "/bookmarks/archived"), 302); }
+  if (!isNaN(singleId("remove"))) { await deleteBookmark(c.env.DB, singleId("remove")); return c.redirect(returnTo(form), 302); }
+  if (!isNaN(singleId("mark_as_read"))) { await bulkMarkRead(c.env.DB, [singleId("mark_as_read")]); return c.redirect(returnTo(form), 302); }
+  if (!isNaN(singleId("mark_as_unread"))) { await bulkMarkUnread(c.env.DB, [singleId("mark_as_unread")]); return c.redirect(returnTo(form), 302); }
+  if (!isNaN(singleId("share"))) { await bulkShare(c.env.DB, [singleId("share")]); return c.redirect(returnTo(form), 302); }
+  if (!isNaN(singleId("unshare"))) { await bulkUnshare(c.env.DB, [singleId("unshare")]); return c.redirect(returnTo(form), 302); }
 
   // Bulk actions.
   const action = (form.get("bulk_action") as string) || "";
@@ -223,7 +248,7 @@ webRouter.post("/bookmarks/bulk", webAuth, async (c) => {
     }
   }
 
-  return c.redirect("/bookmarks", 302);
+  return c.redirect(returnTo(form), 302);
 });
 
 // ── Bookmark CRUD (web) ─────────────────────────────────────────────
@@ -306,20 +331,23 @@ webRouter.post("/bookmarks/:id", webAuth, async (c) => {
 
 webRouter.post("/bookmarks/:id/delete", webAuth, async (c) => {
   const id = parseInt(c.req.param("id") || "", 10);
+  const form = await getFormData(c);
   await deleteBookmark(c.env.DB, id);
-  return c.redirect("/bookmarks", 302);
+  return c.redirect(returnTo(form), 302);
 });
 
 webRouter.post("/bookmarks/:id/archive", webAuth, async (c) => {
   const id = parseInt(c.req.param("id") || "", 10);
+  const form = await getFormData(c);
   await setArchived(c.env.DB, id, true);
-  return c.redirect("/bookmarks", 302);
+  return c.redirect(returnTo(form), 302);
 });
 
 webRouter.post("/bookmarks/:id/unarchive", webAuth, async (c) => {
   const id = parseInt(c.req.param("id") || "", 10);
+  const form = await getFormData(c);
   await setArchived(c.env.DB, id, false);
-  return c.redirect("/bookmarks/archived", 302);
+  return c.redirect(returnTo(form, "/bookmarks/archived"), 302);
 });
 
 // ── Tags ────────────────────────────────────────────────────────────
