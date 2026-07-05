@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { parseHTML } from "linkedom";
 import { app } from "../src/index.js";
 import { createSession } from "../src/web/auth.js";
+import { issueCsrf, CSRF_COOKIE_NAME } from "../src/web/csrf.js";
 import { setupTestDb } from "./helpers/migrations.js";
 
 // Create a session signed with the test env's actual SESSION_SECRET so that
@@ -12,12 +13,19 @@ async function authSession(): Promise<string> {
   return createSession({ SESSION_SECRET: env.SESSION_SECRET } as any);
 }
 
+async function csrfToken(): Promise<string> {
+  return issueCsrf(env.SESSION_SECRET || "default-secret");
+}
+
 async function webReq(
   path: string,
-  opts: { method?: string; session?: string; body?: FormData; redirect?: string } = {},
+  opts: { method?: string; session?: string; csrf?: string; body?: FormData; redirect?: string } = {},
 ) {
   const headers: Record<string, string> = {};
-  if (opts.session) headers["Cookie"] = `ld_session=${opts.session}`;
+  const cookies: string[] = [];
+  if (opts.session) cookies.push(`ld_session=${opts.session}`);
+  if (opts.csrf) cookies.push(`${CSRF_COOKIE_NAME}=${encodeURIComponent(opts.csrf)}`);
+  if (cookies.length) headers["Cookie"] = cookies.join("; ");
   const request = new Request(`http://localhost${path}`, {
     method: opts.method || "GET",
     headers,
@@ -248,14 +256,18 @@ describe("Tags index — web route", () => {
     const id = action.match(/\/tags\/(\d+)\/delete/)?.[1];
     expect(id).toBeTruthy();
 
-    // Submit the delete form as-is (hidden fields carry search/sort/unused/page).
+    // Submit the delete form as-is (hidden fields carry CSRF/search/sort/unused/page).
     const formData = new FormData();
     const hidden = form?.querySelectorAll("input[type=hidden]") || [];
+    let csrf = "";
     for (const h of hidden) {
-      formData.append(h.getAttribute("name") || "", h.getAttribute("value") || "");
+      const name = h.getAttribute("name") || "";
+      const value = h.getAttribute("value") || "";
+      formData.append(name, value);
+      if (name === "_csrf") csrf = value;
     }
 
-    const res = await webReq(`/tags/${id}/delete`, { method: "POST", session, body: formData });
+    const res = await webReq(`/tags/${id}/delete`, { method: "POST", session, csrf, body: formData });
     expect(res.status).toBe(302);
     const loc = res.headers.get("location") || "";
     expect(loc).toContain("/tags?");
@@ -265,5 +277,57 @@ describe("Tags index — web route", () => {
     // Tag is gone.
     const remaining = await env.DB.prepare("SELECT COUNT(*) as cnt FROM tags").first<{ cnt: number }>();
     expect(remaining?.cnt).toBe(54);
+  });
+
+  it("renames a tag", async () => {
+    const id = await seedTag("old-name");
+    const session = await authSession();
+    const csrf = await csrfToken();
+    const form = new FormData();
+    form.append("_csrf", csrf);
+    form.append("name", "new-name");
+    const res = await webReq(`/tags/${id}/rename`, { method: "POST", session, csrf, body: form });
+    expect(res.status).toBe(302);
+    const renamed = await env.DB.prepare("SELECT id FROM tags WHERE name = ?").bind("new-name").first<{ id: number }>();
+    expect(renamed?.id).toBe(id);
+  });
+
+  it("merges when renaming a tag to an existing tag", async () => {
+    const source = await seedTag("source-tag");
+    const target = await seedTag("target-tag");
+    const sourceBookmark = await seedBookmarkWithTags([source]);
+    const targetBookmark = await seedBookmarkWithTags([target]);
+    const bothBookmark = await seedBookmarkWithTags([source, target]);
+    const session = await authSession();
+    const csrf = await csrfToken();
+    const form = new FormData();
+    form.append("_csrf", csrf);
+    form.append("name", "target-tag");
+
+    const res = await webReq(`/tags/${source}/rename`, { method: "POST", session, csrf, body: form });
+
+    expect(res.status).toBe(302);
+    const sourceRow = await env.DB.prepare("SELECT id FROM tags WHERE id = ?").bind(source).first<{ id: number }>();
+    expect(sourceRow).toBeNull();
+    const rows = (await env.DB.prepare("SELECT bookmark_id, tag_id FROM bookmark_tags ORDER BY bookmark_id").all<{ bookmark_id: number; tag_id: number }>()).results;
+    expect(rows).toEqual([
+      { bookmark_id: sourceBookmark, tag_id: target },
+      { bookmark_id: targetBookmark, tag_id: target },
+      { bookmark_id: bothBookmark, tag_id: target },
+    ]);
+  });
+
+  it("deletes unused tags only", async () => {
+    const used = await seedTag("used-tag");
+    await seedTag("unused-tag");
+    await seedBookmarkWithTags([used]);
+    const session = await authSession();
+    const csrf = await csrfToken();
+    const form = new FormData();
+    form.append("_csrf", csrf);
+    const res = await webReq("/tags/delete-unused", { method: "POST", session, csrf, body: form });
+    expect(res.status).toBe(302);
+    const names = (await env.DB.prepare("SELECT name FROM tags ORDER BY name").all<{ name: string }>()).results.map((t) => t.name);
+    expect(names).toEqual(["used-tag"]);
   });
 });

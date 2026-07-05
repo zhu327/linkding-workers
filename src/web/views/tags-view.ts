@@ -10,6 +10,7 @@ export interface TagsPageOpts {
   count: number;
   page: number;
   limit: number;
+  csrfToken?: string;
 }
 
 const SORT_OPTIONS: [string, string][] = [
@@ -57,21 +58,32 @@ function tagPagination(total: number, page: number, limit: number, params: Recor
 }
 
 export function tagsPage(opts: TagsPageOpts): string {
-  const { tags, search, sort, unusedOnly, total, count, page, limit } = opts;
+  const { tags, search, sort, unusedOnly, total, count, page, limit, csrfToken } = opts;
+  const csrf = csrfToken ? `<input type="hidden" name="_csrf" value="${esc(csrfToken)}">` : "";
 
   const rows = tags.map((t) =>
     `<tr>
-      <td>${esc(t.name)}</td>
+      <td><a href="/bookmarks?tag=${encodeURIComponent(t.name)}">${esc(t.name)}</a></td>
       <td style="width: 25%">
         <a class="btn btn-link" href="/bookmarks?q=%23${encodeURIComponent(t.name)}">${t.bookmark_count}</a>
       </td>
       <td class="actions">
         <form method="post" action="/tags/${t.id}/delete" class="d-inline">
+          ${csrf}
           <input type="hidden" name="search" value="${esc(search)}">
           <input type="hidden" name="sort" value="${esc(sort)}">
           ${unusedOnly ? '<input type="hidden" name="unused" value="true">' : ""}
           <input type="hidden" name="page" value="${page}">
           <button data-confirm data-confirm-question="Delete tag ${esc(t.name)}?" type="submit" class="btn btn-link text-error">Remove</button>
+        </form>
+        <form method="post" action="/tags/${t.id}/rename" class="d-inline d-flex gap-1">
+          ${csrf}
+          <input type="hidden" name="search" value="${esc(search)}">
+          <input type="hidden" name="sort" value="${esc(sort)}">
+          ${unusedOnly ? '<input type="hidden" name="unused" value="true">' : ""}
+          <input type="hidden" name="page" value="${page}">
+          <input type="text" name="name" value="${esc(t.name)}" class="form-input input-sm" aria-label="Rename ${esc(t.name)}">
+          <button type="submit" class="btn btn-link">Rename</button>
         </form>
       </td>
     </tr>`).join("");
@@ -100,6 +112,10 @@ export function tagsPage(opts: TagsPageOpts): string {
     <div class="crud-header">
       <h1 id="main-heading">Tags</h1>
       <div class="d-flex gap-2 ml-auto">
+        <form method="post" action="/tags/delete-unused" class="d-inline">
+          ${csrf}
+          <button data-confirm data-confirm-question="Delete all unused tags?" type="submit" class="btn">Delete unused</button>
+        </form>
         <a href="#merge" class="btn">Merge Tags</a>
       </div>
     </div>
@@ -132,6 +148,7 @@ export function tagsPage(opts: TagsPageOpts): string {
     <section id="merge" aria-labelledby="merge-heading" class="mt-6">
       <h2 id="merge-heading" class="text-lg">Merge Tags</h2>
       <form method="post" action="/tags/merge" class="form-group d-flex gap-2 align-end">
+        ${csrf}
         <div class="form-group" style="margin:0">
           <label for="source" class="form-label">Source tag</label>
           <input type="text" id="source" name="source" class="form-input" required placeholder="tag-to-remove">

@@ -60,11 +60,16 @@ export interface UserProfileRow {
   bookmark_link_target: string;
   web_archive_integration: string;
   tag_search: string;
+  tag_grouping: string;
   enable_sharing: number;
   enable_public_sharing: number;
   enable_favicons: number;
+  enable_preview_images: number;
   display_url: number;
   permanent_notes: number;
+  bookmark_description_display: string;
+  bookmark_description_max_lines: number;
+  collapse_side_panel: number;
   search_preferences: string;
   auto_tagging_rules: string;
   items_per_page: number;

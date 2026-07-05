@@ -9,6 +9,7 @@ export interface CreateBookmarkInput {
   title?: string;
   description?: string;
   notes?: string;
+  preview_image_url?: string;
   is_archived?: boolean;
   unread?: boolean;
   shared?: boolean;
@@ -107,13 +108,14 @@ export async function createBookmark(
     // Update existing bookmark in place (upsert)
     await db
       .prepare(
-        "UPDATE bookmarks SET url = ?, title = ?, description = ?, notes = ?, is_archived = ?, unread = ?, shared = ?, date_modified = ? WHERE id = ?",
+        "UPDATE bookmarks SET url = ?, title = ?, description = ?, notes = ?, preview_image_url = ?, is_archived = ?, unread = ?, shared = ?, date_modified = ? WHERE id = ?",
       )
       .bind(
         input.url,
         input.title ?? existing.title,
         input.description ?? existing.description,
         input.notes ?? existing.notes,
+        input.preview_image_url ?? existing.preview_image_url,
         input.is_archived !== undefined ? (input.is_archived ? 1 : 0) : existing.is_archived,
         input.unread !== undefined ? (input.unread ? 1 : 0) : existing.unread,
         input.shared !== undefined ? (input.shared ? 1 : 0) : existing.shared,
@@ -131,7 +133,7 @@ export async function createBookmark(
   // Insert new bookmark
   const result = await db
     .prepare(
-      "INSERT INTO bookmarks (url, url_normalized, title, description, notes, is_archived, unread, shared, date_added, date_modified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO bookmarks (url, url_normalized, title, description, notes, preview_image_url, is_archived, unread, shared, date_added, date_modified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(
       input.url,
@@ -139,6 +141,7 @@ export async function createBookmark(
       input.title || "",
       input.description || "",
       input.notes || "",
+      input.preview_image_url || "",
       input.is_archived ? 1 : 0,
       input.unread !== undefined ? (input.unread ? 1 : 0) : (profile.default_mark_unread ? 1 : 0),
       input.shared !== undefined ? (input.shared ? 1 : 0) : (profile.default_mark_shared ? 1 : 0),
@@ -183,7 +186,7 @@ export async function updateBookmark(
 
   await db
     .prepare(
-      "UPDATE bookmarks SET url = ?, url_normalized = ?, title = ?, description = ?, notes = ?, is_archived = ?, unread = ?, shared = ?, date_modified = ? WHERE id = ?",
+      "UPDATE bookmarks SET url = ?, url_normalized = ?, title = ?, description = ?, notes = ?, preview_image_url = ?, is_archived = ?, unread = ?, shared = ?, date_modified = ? WHERE id = ?",
     )
     .bind(
       newUrl,
@@ -191,6 +194,7 @@ export async function updateBookmark(
       patch.title ?? existing.title,
       patch.description ?? existing.description,
       patch.notes ?? existing.notes,
+      patch.preview_image_url ?? existing.preview_image_url,
       patch.is_archived !== undefined ? (patch.is_archived ? 1 : 0) : existing.is_archived,
       patch.unread !== undefined ? (patch.unread ? 1 : 0) : existing.unread,
       patch.shared !== undefined ? (patch.shared ? 1 : 0) : existing.shared,

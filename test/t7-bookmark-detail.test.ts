@@ -49,11 +49,16 @@ function makeProfile(overrides: Partial<UserProfileRow> = {}): UserProfileRow {
     bookmark_link_target: "_blank",
     web_archive_integration: "disabled",
     tag_search: "strict",
+    tag_grouping: "disabled",
     enable_sharing: 0,
     enable_public_sharing: 0,
     enable_favicons: 1,
+    enable_preview_images: 1,
     display_url: 0,
     permanent_notes: 0,
+    bookmark_description_display: "separate",
+    bookmark_description_max_lines: 3,
+    collapse_side_panel: 0,
     search_preferences: "{}",
     auto_tagging_rules: "",
     items_per_page: 30,
@@ -137,7 +142,7 @@ describe("bookmarkDetailPage — rendering", () => {
     const html = bookmarkDetailPage({
       bookmark: makeBookmark({ date_added: "2024-01-01T00:00:00Z" }),
       tagNames: [],
-      profile: makeProfile(),
+      profile: makeProfile({ bookmark_date_display: "absolute" }),
     });
     expect(html).toContain("2024");
   });

@@ -136,6 +136,7 @@ bookmarkRoutes.post("/", async (c) => {
     title?: string;
     description?: string;
     notes?: string;
+    preview_image_url?: string;
     is_archived?: boolean;
     unread?: boolean;
     shared?: boolean;

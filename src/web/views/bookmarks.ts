@@ -5,7 +5,7 @@ import type { BookmarkRow, UserProfileRow, TagRow, BundleRow } from "../../db/sc
 import { deriveFaviconUrl } from "../../services/favicon.js";
 import { bulkEditBar } from "./bulk-actions.js";
 import { renderMarkdown } from "../../utils/markdown.js";
-import { formatDate } from "./render-helpers.js";
+import { formatBookmarkDate } from "./render-helpers.js";
 
 interface BookmarkViewModel {
   row: BookmarkRow;
@@ -16,16 +16,29 @@ function tagLink(basePath: string, name: string): string {
   return `<a href="${basePath}?tag=${encodeURIComponent(name)}">#${esc(name)}</a>`;
 }
 
+function linkAttrs(profile: UserProfileRow): string {
+  const target = profile.bookmark_link_target === "_self" ? "_self" : "_blank";
+  return target === "_blank" ? `target="_blank" rel="noopener"` : `target="_self"`;
+}
+
+function bookmarkDate(row: BookmarkRow, profile: UserProfileRow): string {
+  return formatBookmarkDate(row.date_added, profile.bookmark_date_display);
+}
+
 function bookmarkItem(bm: BookmarkViewModel, profile: UserProfileRow, basePath: string, anonymous?: boolean): string {
   const { row, tagNames } = bm;
   const title = row.title || row.url;
   const showFavicons = !!profile.enable_favicons;
   const favicon = showFavicons ? (row.favicon_url || deriveFaviconUrl(row.url)) : "";
-  const classes = [row.unread ? "unread" : "", row.shared ? "shared" : ""].filter(Boolean).join(" ");
+  const classes = [row.unread ? "unread" : "", row.shared ? "shared" : "", profile.permanent_notes ? "show-notes" : ""].filter(Boolean).join(" ");
+  const targetAttrs = linkAttrs(profile);
+  const date = bookmarkDate(row, profile);
   const tagsHtml = tagNames.length
     ? `<div class="tags">${tagNames.map((t) => tagLink(basePath, t)).join("\n")}</div>`
     : "";
-  const descHtml = row.description ? `<div class="description separate">${esc(row.description)}</div>` : "";
+  const descriptionDisplay = ["inline", "hidden", "separate"].includes(profile.bookmark_description_display) ? profile.bookmark_description_display : "separate";
+  const descHtml = row.description && descriptionDisplay !== "hidden" ? `<div class="description ${descriptionDisplay}">${esc(row.description)}</div>` : "";
+  const previewImage = profile.enable_preview_images ? safeHref(row.preview_image_url || "") : "";
   const notesHtml = row.notes ? `<div class="notes"><div class="markdown">${renderMarkdown(row.notes)}</div></div>` : "";
 
   const checkbox = anonymous ? "" :
@@ -43,11 +56,11 @@ function bookmarkItem(bm: BookmarkViewModel, profile: UserProfileRow, basePath: 
     if (row.shared) {
       extra.push(`<button type="submit" name="unshare" value="${row.id}" class="btn btn-link btn-sm btn-icon" data-confirm data-confirm-question="Unshare?">${svgIcon("share", 16)} Shared</button>`);
     }
-    if (row.notes) {
+    if (row.notes && !profile.permanent_notes) {
       extra.push(`<button type="button" class="btn btn-link btn-sm btn-icon toggle-notes">${svgIcon("note", 16)} Notes</button>`);
     }
     actions = `<div class="actions">
-      <span>${formatDate(row.date_added)}</span><span>|</span>
+      ${date ? `<span>${date}</span><span>|</span>` : ""}
       <a href="/bookmarks/${row.id}?modal=1" class="view-action" data-modal-trigger data-bookmark-id="${row.id}">View</a>
       <a href="/bookmarks/${row.id}/edit">Edit</a>
       ${archiveBtn}
@@ -55,17 +68,18 @@ function bookmarkItem(bm: BookmarkViewModel, profile: UserProfileRow, basePath: 
       ${extra.length ? `<div class="extra-actions"><span class="hide-sm">|</span>${extra.join("")}</div>` : ""}
     </div>`;
   } else {
-    actions = `<div class="actions"><span>${formatDate(row.date_added)}</span></div>`;
+    actions = date ? `<div class="actions"><span>${date}</span></div>` : "";
   }
 
-  return `<li data-bookmark-id="${row.id}" role="listitem"${classes ? ` class="${classes}"` : ""}>
+  return `<li data-bookmark-id="${row.id}" role="listitem"${classes ? ` class="${classes}"` : ""} style="--ld-bookmark-description-max-lines:${Math.min(Math.max(profile.bookmark_description_max_lines || 3, 1), 10)}">
+  ${previewImage ? `<img class="preview-image" src="${esc(previewImage)}" alt="">` : ""}
   <div class="content">
     <div class="title">
       ${checkbox}
       ${favicon ? `<img class="favicon" src="${esc(favicon)}" alt="">` : ""}
-      <a href="${safeHref(row.url)}" target="_blank" rel="noopener"><span>${esc(title)}</span></a>
+      <a href="${safeHref(row.url)}" ${targetAttrs}><span>${esc(title)}</span></a>
     </div>
-    <div class="url-path truncate"><a href="${safeHref(row.url)}" target="_blank" rel="noopener" class="url-display">${esc(row.url)}</a></div>
+    ${profile.display_url ? `<div class="url-path truncate"><a href="${safeHref(row.url)}" ${targetAttrs} class="url-display">${esc(row.url)}</a></div>` : ""}
     ${descHtml}
     ${tagsHtml}
     ${notesHtml}
@@ -180,13 +194,34 @@ function bundleSection(bundles: BundleRow[], selectedBundleId: number, basePath:
 </section>`;
 }
 
-function tagSection(allTags: TagRow[], selectedTag: string, basePath: string, authenticated: boolean): string {
+function renderGroupedTags(allTags: TagRow[], selectedTag: string, basePath: string, grouping: string): string {
+  const visibleTags = allTags.filter((t) => t.name !== selectedTag);
+  const link = (name: string) => `<a href="${basePath}?tag=${encodeURIComponent(name)}" class="mr-2"><span>${esc(name)}</span></a>`;
+  if (!visibleTags.length) return `<div class="unselected-tags"><p class="group"></p></div>`;
+  if (grouping === "alphabetical") {
+    const groups = new Map<string, string[]>();
+    for (const tag of visibleTags) {
+      const key = (tag.name[0] || "#").toUpperCase();
+      groups.set(key, [...(groups.get(key) || []), tag.name]);
+    }
+    return `<div class="unselected-tags">${[...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, names]) => `<p class="group"><strong>${esc(key)}</strong><br>${names.map(link).join("\n")}</p>`).join("")}</div>`;
+  }
+  if (grouping === "prefix") {
+    const groups = new Map<string, string[]>();
+    for (const tag of visibleTags) {
+      const key = tag.name.includes("/") ? tag.name.split("/", 1)[0] : "Other";
+      groups.set(key, [...(groups.get(key) || []), tag.name]);
+    }
+    return `<div class="unselected-tags">${[...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, names]) => `<p class="group"><strong>${esc(key)}</strong><br>${names.map(link).join("\n")}</p>`).join("")}</div>`;
+  }
+  return `<div class="unselected-tags"><p class="group">${visibleTags.map((t) => link(t.name)).join("\n")}</p></div>`;
+}
+
+function tagSection(allTags: TagRow[], selectedTag: string, basePath: string, authenticated: boolean, grouping: string): string {
   const selected = selectedTag
     ? `<p class="selected-tags"><a href="${basePath}" class="text-bold mr-2"><span>-${esc(selectedTag)}</span></a></p>`
     : "";
-  const tags = allTags.length
-    ? `<div class="unselected-tags"><p class="group">${allTags.map((t) => `<a href="${basePath}?tag=${encodeURIComponent(t.name)}" class="mr-2"><span>${esc(t.name)}</span></a>`).join("\n")}</p></div>`
-    : `<div class="unselected-tags"><p class="group"></p></div>`;
+  const tags = `${selected}${renderGroupedTags(allTags, selectedTag, basePath, grouping)}`;
   const menu = authenticated
     ? `<div class="dropdown dropdown-right ml-auto">
       <button class="btn btn-noborder dropdown-toggle" aria-label="Tags menu">${svgIcon("menu", 20)}</button>
@@ -200,7 +235,7 @@ function tagSection(allTags: TagRow[], selectedTag: string, basePath: string, au
     <h2 id="tags-heading">Tags</h2>
     ${menu}
   </div>
-  <div id="tag-cloud-container"><div class="tag-cloud">${selected}${tags}</div></div>
+  <div id="tag-cloud-container"><div class="tag-cloud">${tags}</div></div>
 </section>`;
 }
 
@@ -247,6 +282,7 @@ export function bookmarksListPage(opts: {
       <div class="header-controls">
         ${search}
         ${bulkEditEnabled ? `<button class="btn hide-sm ml-2 bulk-edit-active-toggle" title="Bulk edit">${svgIcon("bulk-edit", 20)}</button>` : ""}
+        <button class="btn hide-md ml-2 side-panel-toggle" type="button">Side panel</button>
         <ld-filter-drawer-trigger><button class="btn ml-2" type="button">Filters</button></ld-filter-drawer-trigger>
       </div>
     </div>
@@ -263,9 +299,9 @@ export function bookmarksListPage(opts: {
       <div id="bookmark-list-container">${listHtml}</div>
     </form>
   </main>
-  <div class="side-panel col-1 hide-md">
+  <div class="side-panel col-1 hide-md"${profile.collapse_side_panel ? ` style="display:none"` : ""}>
     ${bundleSection(bundles, selectedBundleId, basePath, q)}
-    ${tagSection(allTags, selectedTag, basePath, !anonymous)}
+    ${tagSection(allTags, selectedTag, basePath, !anonymous, profile.tag_grouping || "disabled")}
   </div>
 </ld-bookmark-page>`;
 }

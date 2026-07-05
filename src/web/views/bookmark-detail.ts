@@ -3,13 +3,22 @@ import { safeHref } from "../../utils/html.js";
 import type { BookmarkRow, UserProfileRow } from "../../db/schema.js";
 import { renderMarkdown } from "../../utils/markdown.js";
 import { deriveFaviconUrl } from "../../services/favicon.js";
-import { formatDate } from "./render-helpers.js";
+import { formatBookmarkDate } from "./render-helpers.js";
 
 interface DetailOpts {
   bookmark: BookmarkRow;
   tagNames: string[];
   profile: UserProfileRow;
   anonymous?: boolean;
+}
+
+function linkAttrs(profile: UserProfileRow): string {
+  const target = profile.bookmark_link_target === "_self" ? "_self" : "_blank";
+  return target === "_blank" ? `target="_blank" rel="noopener"` : `target="_self"`;
+}
+
+function bookmarkDate(row: BookmarkRow, profile: UserProfileRow): string {
+  return formatBookmarkDate(row.date_added, profile.bookmark_date_display);
 }
 
 function buildDetailContent(row: BookmarkRow, tagNames: string[], profile: UserProfileRow, anonymous: boolean): {
@@ -20,11 +29,18 @@ function buildDetailContent(row: BookmarkRow, tagNames: string[], profile: UserP
   notesHtml: string;
   statusSection: string;
   footerActions: string;
+  previewImageHtml: string;
+  dateAddedHtml: string;
+  targetAttrs: string;
 } {
   const title = row.title || row.url;
   const showFavicons = !!profile.enable_favicons;
   const favicon = showFavicons ? (row.favicon_url || deriveFaviconUrl(row.url)) : "";
+  const previewImage = profile.enable_preview_images ? safeHref(row.preview_image_url || "") : "";
   const sharing = !!profile.enable_sharing;
+  const date = bookmarkDate(row, profile);
+  const dateAddedHtml = date ? `<section class="date-added col-1"><h3>Date added</h3><div><span>${date}</span></div></section>` : "";
+  const targetAttrs = linkAttrs(profile);
   const tagsHtml = tagNames.length
     ? `<section class="tags col-1"><h3 id="details-modal-tags-title">Tags</h3><div>${tagNames.map((t) => `<a href="/bookmarks?tag=${encodeURIComponent(t)}">#${esc(t)}</a>`).join(" ")}</div></section>`
     : "";
@@ -40,6 +56,7 @@ function buildDetailContent(row: BookmarkRow, tagNames: string[], profile: UserP
             ${sharing ? `<div class="form-group"><label class="form-checkbox"><input type="checkbox" disabled${row.shared ? " checked" : ""}><i class="form-icon"></i> Shared</label></div>` : ""}
           </div>
         </section>`;
+  const previewImageHtml = previewImage ? `<div class="preview-image"><img src="${esc(previewImage)}" alt=""></div>` : "";
   const footerActions = anonymous ? "" : `<div class="modal-footer"><div class="actions">
     <div class="left-actions">${editBtn}</div>
     <div class="right-actions">
@@ -49,13 +66,13 @@ function buildDetailContent(row: BookmarkRow, tagNames: string[], profile: UserP
     </div>
   </div></div>`;
 
-  return { title, favicon, tagsHtml, descHtml, notesHtml, statusSection, footerActions };
+  return { title, favicon, tagsHtml, descHtml, notesHtml, statusSection, footerActions, previewImageHtml, dateAddedHtml, targetAttrs };
 }
 
 /** Render bookmark detail as a full page (wrapped in layout) */
 export function bookmarkDetailPage(opts: DetailOpts): string {
   const { bookmark: row, tagNames, profile, anonymous = false } = opts;
-  const { title, favicon, tagsHtml, descHtml, notesHtml, statusSection, footerActions } = buildDetailContent(row, tagNames, profile, anonymous);
+  const { title, favicon, tagsHtml, descHtml, notesHtml, statusSection, footerActions, previewImageHtml, dateAddedHtml, targetAttrs } = buildDetailContent(row, tagNames, profile, anonymous);
 
   return `<div class="bookmark-details">
   <div class="modal-container" role="dialog">
@@ -64,15 +81,16 @@ export function bookmarkDetailPage(opts: DetailOpts): string {
     </div>
     <div class="modal-body">
       <div class="weblinks">
-        <a class="weblink" href="${safeHref(row.url)}" rel="noopener" target="_blank">
+        <a class="weblink" href="${safeHref(row.url)}" ${targetAttrs}>
           ${favicon ? `<img class="favicon" src="${esc(favicon)}" alt="">` : ""}
           <span>${esc(row.url)}</span>
         </a>
       </div>
+      ${previewImageHtml}
       <div class="sections grid columns-2 columns-sm-1 gap-0">
         ${statusSection}
         ${tagsHtml}
-        <section class="date-added col-1"><h3>Date added</h3><div><span>${formatDate(row.date_added)}</span></div></section>
+        ${dateAddedHtml}
         ${descHtml}
         ${notesHtml}
       </div>
@@ -85,7 +103,7 @@ export function bookmarkDetailPage(opts: DetailOpts): string {
 /** Render bookmark detail as a modal (for injection into .modals container) */
 export function bookmarkDetailModal(opts: DetailOpts): string {
   const { bookmark: row, tagNames, profile, anonymous = false } = opts;
-  const { title, favicon, tagsHtml, descHtml, notesHtml, statusSection, footerActions } = buildDetailContent(row, tagNames, profile, anonymous);
+  const { title, favicon, tagsHtml, descHtml, notesHtml, statusSection, footerActions, previewImageHtml, dateAddedHtml, targetAttrs } = buildDetailContent(row, tagNames, profile, anonymous);
 
   return `<div class="modal active bookmark-details" data-modal-id="${row.id}" data-bookmark-id="${row.id}" role="dialog" aria-modal="true" aria-labelledby="modal-title-${row.id}">
   <div class="modal-overlay" data-close-modal></div>
@@ -96,15 +114,16 @@ export function bookmarkDetailModal(opts: DetailOpts): string {
     </div>
     <div class="modal-body">
       <div class="weblinks">
-        <a class="weblink" href="${safeHref(row.url)}" rel="noopener" target="_blank">
+        <a class="weblink" href="${safeHref(row.url)}" ${targetAttrs}>
           ${favicon ? `<img class="favicon" src="${esc(favicon)}" alt="">` : ""}
           <span>${esc(row.url)}</span>
         </a>
       </div>
+      ${previewImageHtml}
       <div class="sections grid columns-2 columns-sm-1 gap-0">
         ${statusSection}
         ${tagsHtml}
-        <section class="date-added col-1"><h3>Date added</h3><div><span>${formatDate(row.date_added)}</span></div></section>
+        ${dateAddedHtml}
         ${descHtml}
         ${notesHtml}
       </div>

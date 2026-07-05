@@ -36,6 +36,24 @@
     if (e.key === "Escape") closeAllDropdowns(null);
   });
 
+  // ── Copy buttons ────────────────────────────────────────────────
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-copy-text],[data-copy-target]");
+    if (!btn) return;
+    var text = btn.getAttribute("data-copy-text") || "";
+    var target = btn.getAttribute("data-copy-target");
+    if (!text && target) {
+      var el = document.querySelector(target);
+      text = el ? (el.getAttribute("href") || el.textContent || "") : "";
+    }
+    if (!text || !navigator.clipboard) return;
+    navigator.clipboard.writeText(text).then(function () {
+      var old = btn.textContent;
+      btn.textContent = "Copied";
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    }).catch(function () {});
+  });
+
   // ── Confirm dialogs ─────────────────────────────────────────────
   // Elements with [data-confirm] show a popover before submitting their form.
   function clearConfirms() {
@@ -103,6 +121,15 @@
     if (page) page.classList.toggle("active");
   });
 
+  // Side panel toggle
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest(".side-panel-toggle");
+    if (!t) return;
+    var panel = document.querySelector(".side-panel");
+    if (!panel) return;
+    panel.style.display = panel.style.display === "none" ? "" : "none";
+  });
+
   // Show/hide the bulk tag input depending on the selected bulk action.
   document.addEventListener("change", function (e) {
     var sel = e.target.closest('select[name="bulk_action"]');
@@ -121,6 +148,7 @@
     }
     initSearchAutocomplete();
     initTagAutocomplete();
+    initBookmarkUrlCheck();
   });
 
   // ── Search Autocomplete ──────────────────────────────────
@@ -395,6 +423,82 @@
           dropdown.style.display = "none";
         }
       });
+    });
+  }
+
+  // ── Bookmark form URL metadata check ─────────────────────
+  function initBookmarkUrlCheck() {
+    var urlInput = document.querySelector('.bookmarks-form input[name="url"]');
+    if (!urlInput || urlInput._bookmarkUrlCheckInit) return;
+    urlInput._bookmarkUrlCheckInit = true;
+    var form = urlInput.closest("form");
+    if (!form || form.getAttribute("action") !== "/bookmarks") return;
+    var titleInput = form.querySelector('input[name="title"]');
+    var descInput = form.querySelector('textarea[name="description"]');
+    var previewInput = form.querySelector('input[name="preview_image_url"]');
+    var tagsInput = form.querySelector('input[name="tag_names"]');
+    var timer = null;
+    var notice = document.createElement("p");
+    notice.className = "form-input-hint bookmark-url-check-hint";
+    urlInput.closest(".form-group").appendChild(notice);
+
+    function setNotice(html) {
+      notice.innerHTML = html || "";
+    }
+
+    function appendTags(tags) {
+      if (!tagsInput || !Array.isArray(tags) || tags.length === 0) return [];
+      var existing = tagsInput.value.split(/\s+/).filter(Boolean);
+      var seen = {};
+      var added = [];
+      existing.forEach(function (t) { seen[t.toLowerCase()] = true; });
+      tags.forEach(function (tag) {
+        if (!seen[String(tag).toLowerCase()]) {
+          existing.push(tag);
+          added.push(tag);
+          seen[String(tag).toLowerCase()] = true;
+        }
+      });
+      tagsInput.value = existing.join(" ");
+      return added;
+    }
+
+    function checkUrl() {
+      var url = urlInput.value.trim();
+      if (!isSafeUrl(url)) {
+        setNotice("");
+        return;
+      }
+      setNotice("Checking URL…");
+      fetch("/bookmarks/check?url=" + encodeURIComponent(url))
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+          if (!data) {
+            setNotice("");
+            return;
+          }
+          var messages = [];
+          if (data.bookmark) {
+            messages.push('Already bookmarked: <a href="/bookmarks/' + encodeURIComponent(data.bookmark.id) + '/edit">edit existing bookmark</a>');
+          }
+          var metadata = data.metadata || {};
+          if (titleInput && !titleInput.value && metadata.title) titleInput.value = metadata.title;
+          if (descInput && !descInput.value && metadata.description) descInput.value = metadata.description;
+          if (previewInput && !previewInput.value && metadata.preview_image) previewInput.value = metadata.preview_image;
+          var addedTags = appendTags(data.auto_tags || []);
+          if (addedTags.length) messages.push("Added tags: " + addedTags.map(escHtml).join(" "));
+          setNotice(messages.join("<br>"));
+        })
+        .catch(function () { setNotice(""); });
+    }
+
+    urlInput.addEventListener("input", function () {
+      clearTimeout(timer);
+      timer = setTimeout(checkUrl, 500);
+    });
+    urlInput.addEventListener("blur", function () {
+      clearTimeout(timer);
+      checkUrl();
     });
   }
 

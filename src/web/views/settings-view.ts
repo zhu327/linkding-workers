@@ -11,6 +11,68 @@ function checkbox(id: string, name: string, label: string, checked: boolean, hin
 </div>`;
 }
 
+// Escape a string for safe embedding inside a single-quoted JS string.
+function escJsString(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function feedUrlsSection(siteUrl?: string, token?: string, publicSharing?: boolean): string {
+  const rows: string[] = [];
+  if (siteUrl && token) {
+    for (const [label, path] of [["All bookmarks", "all"], ["Unread bookmarks", "unread"], ["Shared bookmarks", "shared"]]) {
+      const url = `${siteUrl}/feeds/${token}/${path}`;
+      rows.push(`<div class="input-group mb-2"><span class="input-group-addon">${label}</span><input class="form-input" readonly value="${esc(url)}"><button type="button" class="btn input-group-btn" data-copy-text="${esc(url)}">Copy</button></div>`);
+    }
+  }
+  if (siteUrl && publicSharing) {
+    const url = `${siteUrl}/feeds/shared`;
+    rows.push(`<div class="input-group mb-2"><span class="input-group-addon">Public shared</span><input class="form-input" readonly value="${esc(url)}"><button type="button" class="btn input-group-btn" data-copy-text="${esc(url)}">Copy</button></div>`);
+  }
+  return rows.length ? `<div class="form-group mt-2">${rows.join("")}</div>` : "";
+}
+
+function bookmarkletSection(applicationUrl?: string): string {
+  if (!applicationUrl) return "";
+  const appUrl = escJsString(applicationUrl);
+  // URL-only bookmarklet: linkding opens the form with the current page URL.
+  const serverBookmarklet = `javascript:(function(){var u=window.location;var a='${appUrl}';a+='?url='+encodeURIComponent(u);a+='&auto_close';window.open(a);})();`;
+  // Client-side detection: grab title/description from the current page DOM.
+  const clientBookmarklet = `javascript:(function(){var u=window.location;var t=document.querySelector('title')&&document.querySelector('title').textContent||document.querySelector('meta[property="og:title"]')&&document.querySelector('meta[property="og:title"]').getAttribute('content')||'';var d=document.querySelector('meta[name="description"]')&&document.querySelector('meta[name="description"]').getAttribute('content')||document.querySelector('meta[property="og:description"]')&&document.querySelector('meta[property="og:description"]').getAttribute('content')||'';var a='${appUrl}';a+='?url='+encodeURIComponent(u);a+='&title='+encodeURIComponent(t);a+='&description='+encodeURIComponent(d);a+='&auto_close';window.open(a);})();`;
+  return `    <h3 class="mt-4">Bookmarklet</h3>
+    <p class="form-input-hint">The bookmarklet is an alternative, cross-browser way to quickly add new bookmarks without opening the linkding application first. Drag the button below into your browser's bookmark bar, then click it on any page you want to bookmark.</p>
+    <div class="form-group radio-group" role="radiogroup" aria-labelledby="bookmarklet-method-label">
+      <p id="bookmarklet-method-label">Choose your preferred bookmarklet:</p>
+      <label class="form-radio" for="bookmarklet-type-server">
+        <input id="bookmarklet-type-server" type="radio" name="bookmarklet-type" value="server" checked>
+        <i class="form-icon"></i> Send URL only
+      </label>
+      <label class="form-radio" for="bookmarklet-type-client">
+        <input id="bookmarklet-type-client" type="radio" name="bookmarklet-type" value="client">
+        <i class="form-icon"></i> Send title and description from the browser
+      </label>
+    </div>
+    <div class="form-group bookmarklet-container">
+      <a id="bookmarklet-server" href="${esc(serverBookmarklet)}" class="btn btn-primary">📎 Add bookmark</a>
+      <a id="bookmarklet-client" href="${esc(clientBookmarklet)}" class="btn btn-primary" style="display: none">📎 Add bookmark</a>
+      <button type="button" class="btn" data-copy-target="#bookmarklet-server">Copy URL-only bookmarklet</button>
+      <button type="button" class="btn" data-copy-target="#bookmarklet-client">Copy metadata bookmarklet</button>
+    </div>
+    <script>
+      (function () {
+        var radios = document.querySelectorAll('input[name="bookmarklet-type"]');
+        var server = document.getElementById('bookmarklet-server');
+        var client = document.getElementById('bookmarklet-client');
+        function toggle() {
+          var v = document.querySelector('input[name="bookmarklet-type"]:checked').value;
+          server.style.display = v === 'server' ? 'inline-block' : 'none';
+          client.style.display = v === 'client' ? 'inline-block' : 'none';
+        }
+        toggle();
+        for (var i = 0; i < radios.length; i++) radios[i].addEventListener('change', toggle);
+      })();
+    </script>`;
+}
+
 export function settingsPage(opts: {
   profile: UserProfileRow;
   tokens: ApiTokenRow[];
@@ -18,8 +80,11 @@ export function settingsPage(opts: {
   feedToken?: string;
   csrfToken?: string;
   flash?: string;
+  applicationUrl?: string;
+  currentFeedToken?: string;
+  siteUrl?: string;
 }): string {
-  const { profile, tokens, newToken, feedToken, csrfToken } = opts;
+  const { profile, tokens, newToken, feedToken, csrfToken, applicationUrl, currentFeedToken, siteUrl } = opts;
   const csrf = csrfToken ? `<input type="hidden" name="_csrf" value="${esc(csrfToken)}">` : "";
   const p = profile;
 
@@ -34,8 +99,8 @@ export function settingsPage(opts: {
 
   return `<main class="settings-page" aria-labelledby="main-heading">
   <h1 id="main-heading">Settings</h1>
-  ${newToken ? `<div class="toast toast-success mb-4">New API token created: <code>${esc(newToken)}</code> — copy it now, it won't be shown again.</div>` : ""}
-  ${feedToken ? `<div class="toast toast-success mb-4">Feed token: <code>${esc(feedToken)}</code></div>` : ""}
+  ${newToken ? `<div class="toast toast-success mb-4">New API token created: <code>${esc(newToken)}</code> — copy it now, it won't be shown again. <button type="button" class="btn btn-sm" data-copy-text="${esc(newToken)}">Copy</button></div>` : ""}
+  ${feedToken ? `<div class="toast toast-success mb-4">Feed token: <code>${esc(feedToken)}</code> <button type="button" class="btn btn-sm" data-copy-text="${esc(feedToken)}">Copy</button></div>` : ""}
 
   <section aria-labelledby="profile-heading">
     <h2 id="profile-heading">Profile</h2>
@@ -56,12 +121,55 @@ export function settingsPage(opts: {
         <p class="form-input-hint">The number of bookmarks to display per page.</p>
       </div>
       <div class="form-group">
+        <label for="bookmark_link_target" class="form-label">Bookmark link target</label>
+        <select id="bookmark_link_target" name="bookmark_link_target" class="form-select width-25 width-sm-100">
+          <option value="_blank"${p.bookmark_link_target === "_blank" ? " selected" : ""}>New page</option>
+          <option value="_self"${p.bookmark_link_target === "_self" ? " selected" : ""}>Same page</option>
+        </select>
+        <p class="form-input-hint">Where bookmark links should open.</p>
+      </div>
+      <div class="form-group">
+        <label for="bookmark_date_display" class="form-label">Bookmark date display</label>
+        <select id="bookmark_date_display" name="bookmark_date_display" class="form-select width-25 width-sm-100">
+          <option value="relative"${p.bookmark_date_display === "relative" ? " selected" : ""}>Relative</option>
+          <option value="absolute"${p.bookmark_date_display === "absolute" ? " selected" : ""}>Absolute</option>
+          <option value="hidden"${p.bookmark_date_display === "hidden" ? " selected" : ""}>Hidden</option>
+        </select>
+        <p class="form-input-hint">Whether to show bookmark dates in lists and detail views.</p>
+      </div>
+      ${checkbox("display_url", "display_url", "Display bookmark URLs", !!p.display_url, "Shows the URL below each bookmark title in lists.")}
+      ${checkbox("permanent_notes", "permanent_notes", "Always show notes", !!p.permanent_notes, "Shows bookmark notes in lists without using the notes toggle.")}
+      ${checkbox("enable_preview_images", "enable_preview_images", "Enable preview images", !!p.enable_preview_images, "Shows website preview images for bookmarks when available.")}
+      ${checkbox("collapse_side_panel", "collapse_side_panel", "Collapse side panel by default", !!p.collapse_side_panel, "Hides the bundles and tags side panel by default on bookmark list pages.")}
+      <div class="form-group">
+        <label for="bookmark_description_display" class="form-label">Bookmark description display</label>
+        <select id="bookmark_description_display" name="bookmark_description_display" class="form-select width-25 width-sm-100">
+          <option value="separate"${p.bookmark_description_display === "separate" ? " selected" : ""}>Separate line</option>
+          <option value="inline"${p.bookmark_description_display === "inline" ? " selected" : ""}>Inline</option>
+          <option value="hidden"${p.bookmark_description_display === "hidden" ? " selected" : ""}>Hidden</option>
+        </select>
+        <p class="form-input-hint">How bookmark descriptions should be displayed in lists.</p>
+      </div>
+      <div class="form-group">
+        <label for="bookmark_description_max_lines" class="form-label">Description max lines</label>
+        <input type="number" id="bookmark_description_max_lines" name="bookmark_description_max_lines" value="${p.bookmark_description_max_lines || 3}" class="form-input width-25 width-sm-100" min="1" max="10">
+      </div>
+      <div class="form-group">
         <label for="tag_search" class="form-label">Tag search</label>
         <select id="tag_search" name="tag_search" class="form-select width-25 width-sm-100">
           <option value="strict"${p.tag_search === "strict" ? " selected" : ""}>Strict</option>
           <option value="lax"${p.tag_search === "lax" ? " selected" : ""}>Lax</option>
         </select>
         <p class="form-input-hint">In strict mode, tags must be prefixed with a hash character (#). In lax mode, tags can also be searched without the hash character.</p>
+      </div>
+      <div class="form-group">
+        <label for="tag_grouping" class="form-label">Tag grouping</label>
+        <select id="tag_grouping" name="tag_grouping" class="form-select width-25 width-sm-100">
+          <option value="disabled"${p.tag_grouping === "disabled" ? " selected" : ""}>Disabled</option>
+          <option value="alphabetical"${p.tag_grouping === "alphabetical" ? " selected" : ""}>Alphabetical</option>
+          <option value="prefix"${p.tag_grouping === "prefix" ? " selected" : ""}>By prefix</option>
+        </select>
+        <p class="form-input-hint">Group tags in the side panel alphabetically or by prefix before a slash.</p>
       </div>
       <div class="form-group">
         <label for="web_archive_integration" class="form-label">Internet Archive integration</label>
@@ -96,6 +204,10 @@ export function settingsPage(opts: {
         <input type="submit" name="update_profile" value="Save" class="btn btn-primary btn-wide mt-2">
       </div>
     </form>
+    <form action="/settings/search-preferences/clear" method="post" class="form-group">
+      ${csrf}
+      <button data-confirm data-confirm-question="Clear saved search preferences?" type="submit" class="btn">Clear search preferences</button>
+    </form>
   </section>
 
   <section id="integrations" aria-labelledby="integrations-heading">
@@ -117,6 +229,9 @@ export function settingsPage(opts: {
       <p class="form-input-hint">Generate a feed token to subscribe to RSS/Atom feeds of your bookmarks.</p>
       <input type="submit" class="btn" value="Generate Feed Token">
     </form>
+    ${feedUrlsSection(siteUrl, feedToken || currentFeedToken, !!(p.enable_sharing && p.enable_public_sharing))}
+
+    ${bookmarkletSection(applicationUrl)}
   </section>
 
   <section aria-labelledby="import-heading">

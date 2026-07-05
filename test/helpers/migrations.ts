@@ -96,6 +96,15 @@ const MIGRATION_0002 = `ALTER TABLE user_profile ADD COLUMN default_mark_unread 
 ALTER TABLE user_profile ADD COLUMN default_mark_shared INTEGER NOT NULL DEFAULT 0;
 `;
 
+const MIGRATION_0003 = `ALTER TABLE user_profile ADD COLUMN enable_preview_images INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE user_profile ADD COLUMN bookmark_description_display TEXT NOT NULL DEFAULT 'separate';
+ALTER TABLE user_profile ADD COLUMN bookmark_description_max_lines INTEGER NOT NULL DEFAULT 3;
+`;
+
+const MIGRATION_0004 = `ALTER TABLE user_profile ADD COLUMN tag_grouping TEXT NOT NULL DEFAULT 'disabled';
+ALTER TABLE user_profile ADD COLUMN collapse_side_panel INTEGER NOT NULL DEFAULT 0;
+`;
+
 // Applies the real migrations against a D1 binding.  This matches the
 // exact schema that `wrangler d1 execute` would create — including
 // UNIQUE COLLATE NOCASE on tags.name and the seeded user_profile row.
@@ -108,17 +117,20 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   for (const stmt of stmts1) {
     await db.prepare(stmt).run();
   }
-  // Run MIGRATION_0002 (ALTER TABLE — must be idempotent for multi-test-file runs)
-  const stmts2 = MIGRATION_0002
-    .split(";")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  for (const stmt of stmts2) {
-    try {
-      await db.prepare(stmt).run();
-    } catch (e: any) {
-      // Ignore "duplicate column" errors — column already added by another test file
-      if (!e?.message?.includes("duplicate column")) throw e;
+  // Run ALTER TABLE migrations idempotently for multi-test-file runs.
+  const alterMigrations = [MIGRATION_0002, MIGRATION_0003, MIGRATION_0004];
+  for (const migration of alterMigrations) {
+    const stmts = migration
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    for (const stmt of stmts) {
+      try {
+        await db.prepare(stmt).run();
+      } catch (e: any) {
+        // Ignore "duplicate column" errors — column already added by another test file
+        if (!e?.message?.includes("duplicate column")) throw e;
+      }
     }
   }
 }

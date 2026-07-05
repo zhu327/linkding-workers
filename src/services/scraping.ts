@@ -15,8 +15,30 @@ export interface WebsiteMetadata {
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.0.0 Safari/537.36";
 
+function isPrivateIPv4(hostname: string): boolean {
+  const parts = hostname.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = parts;
+  return a === 10 || a === 127 || a === 0 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168;
+}
+
+function isBlockedHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  return host === "localhost" || host.endsWith(".localhost") || isPrivateIPv4(host) || host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
+}
+
+export function isSafeMetadataUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && !isBlockedHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchHead(url: string): Promise<string | null> {
   try {
+    if (!isSafeMetadataUrl(url)) return null;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     const response = await fetch(url, {

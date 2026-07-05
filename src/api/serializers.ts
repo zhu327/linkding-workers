@@ -6,11 +6,16 @@ export interface UserProfileResponse {
   bookmark_link_target: string;
   web_archive_integration: string;
   tag_search: string;
+  tag_grouping: string;
   enable_sharing: boolean;
   enable_public_sharing: boolean;
   enable_favicons: boolean;
+  enable_preview_images: boolean;
   display_url: boolean;
   permanent_notes: boolean;
+  bookmark_description_display: string;
+  bookmark_description_max_lines: number;
+  collapse_side_panel: boolean;
   search_preferences: Record<string, unknown>;
   default_mark_unread: boolean;
   default_mark_shared: boolean;
@@ -24,11 +29,16 @@ export function serializeUserProfile(row: UserProfileRow, version: string): User
     bookmark_link_target: row.bookmark_link_target,
     web_archive_integration: row.web_archive_integration,
     tag_search: row.tag_search,
+    tag_grouping: row.tag_grouping,
     enable_sharing: !!row.enable_sharing,
     enable_public_sharing: !!row.enable_public_sharing,
     enable_favicons: !!row.enable_favicons,
+    enable_preview_images: !!row.enable_preview_images,
     display_url: !!row.display_url,
     permanent_notes: !!row.permanent_notes,
+    bookmark_description_display: row.bookmark_description_display,
+    bookmark_description_max_lines: row.bookmark_description_max_lines,
+    collapse_side_panel: !!row.collapse_side_panel,
     search_preferences: JSON.parse(row.search_preferences || "{}"),
     default_mark_unread: !!row.default_mark_unread,
     default_mark_shared: !!row.default_mark_shared,

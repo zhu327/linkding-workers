@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { app } from "../src/index.js";
 import { setupTestDb } from "./helpers/migrations.js";
 
@@ -473,6 +473,20 @@ describe("RSS Feeds (T12)", () => {
     expect(res.status).toBe(404);
   });
 
+  it("settings page shows feed URLs for an existing token", async () => {
+    const loginForm = new FormData();
+    loginForm.append("password", "testpass");
+    loginForm.append("_csrf", await testCsrfToken());
+    const loginRes = await fetchUrl("/login", { method: "POST", body: loginForm as any, redirect: "manual" });
+    const session = (loginRes.headers.get("set-cookie") || "").match(/ld_session=([^;]+)/)?.[1] || "";
+    await env.DB.prepare("INSERT OR REPLACE INTO feed_tokens (key, created) VALUES ('settings-feed-key', '2024-01-01T00:00:00Z')").run();
+    const res = await fetchUrl("/settings", { headers: { Cookie: `ld_session=${session}` } });
+    const html = await res.text();
+    expect(html).toContain("http://localhost/feeds/settings-feed-key/all");
+    expect(html).toContain("http://localhost/feeds/settings-feed-key/unread");
+    expect(html).toContain("http://localhost/feeds/settings-feed-key/shared");
+  });
+
   it("feed endpoint returns Atom XML for valid key", async () => {
     // Seed a feed token
     await env.DB.prepare("INSERT OR REPLACE INTO feed_tokens (key, created) VALUES ('valid-feed-key', '2024-01-01T00:00:00Z')").run();
@@ -485,5 +499,164 @@ describe("RSS Feeds (T12)", () => {
     const xml = await res.text();
     expect(xml).toContain("Feed Test");
     expect(xml).toContain("https://feed-test.com");
+  });
+});
+
+describe("Bookmarklet (T13)", () => {
+  beforeAll(async () => {
+    await setupTestDb(env.DB);
+  });
+
+  async function loginAndGetSession(): Promise<string> {
+    const loginForm = new FormData();
+    loginForm.append("password", "testpass");
+    loginForm.append("_csrf", await testCsrfToken());
+    const loginRes = await fetchUrl("/login", { method: "POST", body: loginForm as any, redirect: "manual" });
+    const cookie = loginRes.headers.get("set-cookie") || "";
+    const m = cookie.match(/ld_session=([^;]+)/);
+    return m ? m[1] : "";
+  }
+
+  it("GET /settings renders bookmarklet section with javascript: link", async () => {
+    const session = await loginAndGetSession();
+    const res = await fetchUrl("/settings", { headers: { Cookie: `ld_session=${session}` } });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Bookmarklet");
+    expect(html).toContain('id="bookmarklet-server"');
+    expect(html).toContain('id="bookmarklet-client"');
+    // The bookmarklet href should be a javascript: URL pointing at /bookmarks/new
+    expect(html).toMatch(/href="javascript:\(function\(\)\{[^}]*\/bookmarks\/new/);
+    // Client-side bookmarklet selectors contain double quotes; they must be HTML-escaped in href.
+    expect(html).toContain('meta[property=&quot;og:title&quot;]');
+  });
+
+  it("GET /bookmarks/new?url=...&title=...&auto_close pre-fills form and renders auto_close field", async () => {
+    const session = await loginAndGetSession();
+    const params = new URLSearchParams({ url: "https://example.com/pre-fill", title: "Pre-filled", description: "Desc", tags: "tag1 tag2" });
+    params.set("auto_close", "");
+    const res = await fetchUrl(`/bookmarks/new?${params.toString()}`, { headers: { Cookie: `ld_session=${session}` } });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("https://example.com/pre-fill");
+    expect(html).toContain("Pre-filled");
+    expect(html).toContain("Desc");
+    expect(html).toContain("tag1 tag2");
+    expect(html).toMatch(/name="auto_close"\s+value="1"/);
+  });
+
+  it("GET /bookmarks/check returns metadata and auto-tags for the web form", async () => {
+    vi.stubGlobal("fetch", async () => new Response(`<html><head>
+      <title>Checked Title</title>
+      <meta name="description" content="Checked Description">
+    </head><body></body></html>`, { status: 200 }));
+    try {
+      const session = await loginAndGetSession();
+      await env.DB.prepare("UPDATE user_profile SET auto_tagging_rules=? WHERE id=1").bind("metadata.example checked").run();
+      const res = await fetchUrl("/bookmarks/check?url=https%3A%2F%2Fmetadata.example%2Fpage", { headers: { Cookie: `ld_session=${session}` } });
+      expect(res.status).toBe(200);
+      const body: any = await res.json();
+      expect(body.metadata.title).toBe("Checked Title");
+      expect(body.metadata.description).toBe("Checked Description");
+      expect(body.auto_tags).toContain("checked");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("GET /bookmarks/new?url=... fetches metadata when title/description are absent", async () => {
+    vi.stubGlobal("fetch", async () => new Response(`<html><head>
+      <title>Fetched Title</title>
+      <meta name="description" content="Fetched Description">
+      <meta property="og:image" content="https://metadata.example/preview.png">
+    </head><body></body></html>`, { status: 200 }));
+    try {
+      const session = await loginAndGetSession();
+      const params = new URLSearchParams({ url: "https://metadata.example/page" });
+      const res = await fetchUrl(`/bookmarks/new?${params.toString()}`, { headers: { Cookie: `ld_session=${session}` } });
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("Fetched Title");
+      expect(html).toContain("Fetched Description");
+      expect(html).toContain('name="preview_image_url" value="https://metadata.example/preview.png"');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("POST /bookmarks with auto_close=1 redirects to /bookmarks/close and persists preview image", async () => {
+    const session = await loginAndGetSession();
+    const form = new FormData();
+    form.append("url", "https://auto-close-test.com");
+    form.append("title", "Auto Close");
+    form.append("preview_image_url", "https://auto-close-test.com/preview.png");
+    form.append("auto_close", "1");
+    form.append("_csrf", await testCsrfToken());
+    const res = await fetchUrl("/bookmarks", { method: "POST", headers: { Cookie: `ld_session=${session}` }, body: form as any, redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/bookmarks/close");
+    // Bookmark should have been created
+    const row: any = await env.DB.prepare("SELECT title, preview_image_url FROM bookmarks WHERE url='https://auto-close-test.com'").first();
+    expect(row?.title).toBe("Auto Close");
+    expect(row?.preview_image_url).toBe("https://auto-close-test.com/preview.png");
+  });
+
+  it("GET /bookmarks/close returns HTML that calls window.close()", async () => {
+    const session = await loginAndGetSession();
+    const res = await fetchUrl("/bookmarks/close", { headers: { Cookie: `ld_session=${session}` } });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("window.close()");
+  });
+
+  it("GET /bookmarks persists search preferences", async () => {
+    const session = await loginAndGetSession();
+    const res = await fetchUrl("/bookmarks?sort=title_asc&unread=yes&shared=no", { headers: { Cookie: `ld_session=${session}` } });
+    expect(res.status).toBe(200);
+    const row: any = await env.DB.prepare("SELECT search_preferences FROM user_profile WHERE id=1").first();
+    expect(JSON.parse(row.search_preferences)).toEqual({ sort: "title_asc", unread: "yes", shared: "no" });
+  });
+
+  it("POST /settings/search-preferences/clear clears saved search preferences", async () => {
+    const session = await loginAndGetSession();
+    await env.DB.prepare("UPDATE user_profile SET search_preferences=? WHERE id=1").bind(JSON.stringify({ sort: "title_asc" })).run();
+    const form = new FormData();
+    form.append("_csrf", await testCsrfToken());
+    const res = await fetchUrl("/settings/search-preferences/clear", { method: "POST", headers: { Cookie: `ld_session=${session}` }, body: form as any, redirect: "manual" });
+    expect(res.status).toBe(302);
+    const row: any = await env.DB.prepare("SELECT search_preferences FROM user_profile WHERE id=1").first();
+    expect(row.search_preferences).toBe("{}");
+  });
+
+  it("POST /settings saves bookmark display preferences", async () => {
+    const session = await loginAndGetSession();
+    const form = new FormData();
+    form.append("_csrf", await testCsrfToken());
+    form.append("theme", "auto");
+    form.append("items_per_page", "30");
+    form.append("bookmark_link_target", "_self");
+    form.append("bookmark_date_display", "hidden");
+    form.append("display_url", "1");
+    form.append("permanent_notes", "1");
+    form.append("enable_preview_images", "1");
+    form.append("bookmark_description_display", "hidden");
+    form.append("bookmark_description_max_lines", "5");
+    form.append("collapse_side_panel", "1");
+    form.append("enable_favicons", "1");
+    form.append("tag_search", "strict");
+    form.append("tag_grouping", "prefix");
+    form.append("web_archive_integration", "disabled");
+    const res = await fetchUrl("/settings", { method: "POST", headers: { Cookie: `ld_session=${session}` }, body: form as any, redirect: "manual" });
+    expect(res.status).toBe(302);
+    const row: any = await env.DB.prepare("SELECT bookmark_link_target, bookmark_date_display, display_url, permanent_notes, enable_preview_images, bookmark_description_display, bookmark_description_max_lines, collapse_side_panel, tag_grouping FROM user_profile WHERE id=1").first();
+    expect(row.bookmark_link_target).toBe("_self");
+    expect(row.bookmark_date_display).toBe("hidden");
+    expect(row.display_url).toBe(1);
+    expect(row.permanent_notes).toBe(1);
+    expect(row.enable_preview_images).toBe(1);
+    expect(row.bookmark_description_display).toBe("hidden");
+    expect(row.bookmark_description_max_lines).toBe(5);
+    expect(row.collapse_side_panel).toBe(1);
+    expect(row.tag_grouping).toBe("prefix");
   });
 });

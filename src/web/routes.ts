@@ -6,9 +6,9 @@ declare module "hono" {
     anonymous: boolean;
   }
 }
-import type { BookmarkRow, TagRow, BundleRow, ApiTokenRow, FeedTokenRow } from "../db/schema.js";
+import type { BookmarkRow, TagRow, BundleRow, ApiTokenRow, FeedTokenRow, UserProfileRow } from "../db/schema.js";
 import { getProfile } from "../db/repository.js";
-import { getBookmarkById, getBookmarkTagNames, countBookmarks, listBookmarks, listAllTags, listBundles, getBundleById, listApiTokens, compileBookmarkListQuery, listTagsWithCounts, countAllTags } from "../db/repository.js";
+import { getBookmarkById, getBookmarkByNormalizedUrl, getBookmarkTagNames, countBookmarks, listBookmarks, listAllTags, listBundles, getBundleById, listApiTokens, compileBookmarkListQuery, listTagsWithCounts, countAllTags } from "../db/repository.js";
 import { webAuth, createSession, setSessionCookie, clearSessionCookie } from "./auth.js";
 import { verifyPassword } from "../services/password.js";
 import { issueCsrf, verifyCsrf, CSRF_COOKIE_NAME } from "./csrf.js";
@@ -25,6 +25,9 @@ import { isAllowedScheme } from "../utils/html.js";
 import { ensureTag, parseTagString } from "../services/tags.js";
 import { parseNetscape, exportNetscapeHtml } from "../services/netscape.js";
 import { buildAtomFeed } from "../services/feeds.js";
+import { isSafeMetadataUrl, loadWebsiteMetadata } from "../services/scraping.js";
+import { normalizeUrl } from "../services/url.js";
+import { getTags as getAutoTags } from "../services/auto-tagging.js";
 
 export const webRouter = new Hono<{ Bindings: Env }>();
 
@@ -116,17 +119,27 @@ webRouter.get("/logout", (c) => {
 webRouter.get("/", (c) => c.redirect("/bookmarks", 302));
 
 // ── Bookmarks list ──────────────────────────────────────────────────
+function parseSearchPreferences(profile: UserProfileRow): { sort?: string; unread?: string; shared?: string } {
+  try {
+    const parsed = JSON.parse(profile.search_preferences || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 async function renderBookmarkList(c: AppContext, page: "bookmarks" | "archived" | "shared"): Promise<Response> {
   const db = c.env.DB;
   const profile = await getProfile(db);
   const bundles = await listBundles(db);
+  const prefs = parseSearchPreferences(profile);
   let q = c.req.query("q") || "";
-  let sort = c.req.query("sort") || "added_desc";
+  let sort = c.req.query("sort") ?? (page === "bookmarks" ? prefs.sort : undefined) ?? "added_desc";
   let offset = Math.max(parseInt(c.req.query("offset") || "0", 10), 0);
   const limit = profile.items_per_page || 30;
   let selectedTag = c.req.query("tag") || "";
-  let unread = c.req.query("unread") || "";
-  let shared = c.req.query("shared") || "";
+  let unread = c.req.query("unread") ?? (page === "bookmarks" ? prefs.unread : undefined) ?? "";
+  let shared = c.req.query("shared") ?? (page === "bookmarks" ? prefs.shared : undefined) ?? "";
   const bundleId = c.req.query("bundle") || "";
   let selectedBundleId = 0;
 
@@ -142,6 +155,11 @@ async function renderBookmarkList(c: AppContext, page: "bookmarks" | "archived" 
       else if (bundle.filter_shared === "no") shared = "no";
       if (bundle.any_tags) selectedTag = bundle.any_tags.split(/\s+/)[0] || selectedTag;
     }
+  }
+
+  if (page === "bookmarks" && (c.req.query("sort") !== undefined || c.req.query("unread") !== undefined || c.req.query("shared") !== undefined)) {
+    await db.prepare("UPDATE user_profile SET search_preferences=? WHERE id=1").bind(JSON.stringify({ sort, unread, shared })).run();
+    profile.search_preferences = JSON.stringify({ sort, unread, shared });
   }
 
   const { where, params, orderBy } = await compileBookmarkListQuery(db, profile, {
@@ -196,6 +214,28 @@ webRouter.get("/autocomplete/bookmarks", webAuth, async (c) => {
   });
   const rows = await listBookmarks(c.env.DB, where, params, orderBy, 5, 0);
   return c.json(rows.map((row) => ({ id: row.id, title: row.title || row.url, url: row.url })));
+});
+
+webRouter.get("/bookmarks/check", webAuth, async (c) => {
+  const url = c.req.query("url") || "";
+  if (!url) return c.json({ detail: "url parameter is required." }, 400);
+  const normalized = normalizeUrl(url);
+  const existing = await getBookmarkByNormalizedUrl(c.env.DB, normalized, url);
+  const profile = await getProfile(c.env.DB);
+  const metadata = isSafeMetadataUrl(url) ? await loadWebsiteMetadata(url) : { url, title: null, description: null, preview_image: null };
+  let autoTags: string[] = [];
+  if (profile.auto_tagging_rules) {
+    try {
+      autoTags = getAutoTags(profile.auto_tagging_rules, url);
+    } catch {
+      autoTags = [];
+    }
+  }
+  return c.json({
+    bookmark: existing ? { id: existing.id, title: existing.title || existing.url, url: existing.url } : null,
+    metadata: { url: metadata.url, title: metadata.title, description: metadata.description, preview_image: metadata.preview_image },
+    auto_tags: autoTags,
+  });
 });
 
 webRouter.post("/bookmarks/bulk", webAuth, async (c) => {
@@ -255,28 +295,65 @@ webRouter.post("/bookmarks/bulk", webAuth, async (c) => {
 webRouter.get("/bookmarks/new", webAuth, async (c) => {
   const profile = await getProfile(c.env.DB);
   const allTags = await listAllTags(c.env.DB);
-  return c.html(layout("New Bookmark", bookmarkFormPage({ allTags, profile }), { profile, activeNav: "bookmarks" }));
+  const autoClose = c.req.query("auto_close") !== undefined;
+  const url = c.req.query("url") || "";
+  let title = c.req.query("title") || "";
+  let description = c.req.query("description") || "";
+  let previewImageUrl = c.req.query("preview_image_url") || "";
+  if (url && isSafeMetadataUrl(url) && (!title || !description || !previewImageUrl)) {
+    const metadata = await loadWebsiteMetadata(url);
+    title ||= metadata.title || "";
+    description ||= metadata.description || "";
+    previewImageUrl ||= metadata.preview_image || "";
+  }
+  const defaults = {
+    url: url || undefined,
+    title: title || undefined,
+    description: description || undefined,
+    notes: c.req.query("notes") || undefined,
+    preview_image_url: previewImageUrl || undefined,
+    tag_names: c.req.query("tags") ? c.req.query("tags")!.split(/\s+/).filter(Boolean) : undefined,
+  };
+  return c.html(layout("New Bookmark", bookmarkFormPage({ allTags, profile, defaults, autoClose }), { profile, activeNav: "bookmarks" }));
 });
 
 webRouter.post("/bookmarks", webAuth, async (c) => {
   const form = await getFormData(c);
   const profile = await getProfile(c.env.DB);
   const tagNames = (form.get("tag_names") as string || "").split(/\s+/).filter(Boolean);
+  const autoClose = form.get("auto_close") === "1";
   try {
     await createBookmark(c.env.DB, {
       url: form.get("url") as string,
       title: form.get("title") as string || "",
       description: form.get("description") as string || "",
       notes: form.get("notes") as string || "",
+      preview_image_url: form.get("preview_image_url") as string || "",
       tag_names: tagNames,
       unread: form.get("unread") === "1",
       shared: form.get("shared") === "1",
     }, profile);
-    return c.redirect("/bookmarks", 302);
+    return c.redirect(autoClose ? "/bookmarks/close" : "/bookmarks", 302);
   } catch (e: any) {
     const allTags = await listAllTags(c.env.DB);
-    return c.html(layout("Error", bookmarkFormPage({ allTags, error: e.message }), { profile, activeNav: "bookmarks" }), 400);
+    const defaults = {
+      url: form.get("url") as string || undefined,
+      title: form.get("title") as string || undefined,
+      description: form.get("description") as string || undefined,
+      notes: form.get("notes") as string || undefined,
+      preview_image_url: form.get("preview_image_url") as string || undefined,
+      tag_names: tagNames,
+    };
+    return c.html(layout("Error", bookmarkFormPage({ allTags, error: e.message, defaults, autoClose }), { profile, activeNav: "bookmarks" }), 400);
   }
+});
+
+webRouter.get("/bookmarks/close", webAuth, (c) => {
+  const body = `<main class="bookmarks-close-page" style="text-align:center;padding:2rem">
+  <script type="application/javascript">window.close()</script>
+  <p>You can now close this window.</p>
+</main>`;
+  return c.html(layout("Close", body));
 });
 
 // ── Bookmark detail ──────────────────────────────────────────────────
@@ -319,6 +396,7 @@ webRouter.post("/bookmarks/:id", webAuth, async (c) => {
       title: form.get("title") as string,
       description: form.get("description") as string,
       notes: form.get("notes") as string,
+      preview_image_url: form.get("preview_image_url") as string || "",
       tag_names: tagNames,
       unread: form.get("unread") === "1",
       shared: form.get("shared") === "1",
@@ -369,10 +447,21 @@ webRouter.get("/tags", webAuth, async (c) => {
     offset = (page - 1) * limit;
     ({ count, tags } = await listTagsWithCounts(c.env.DB, { search, sort, unused: unusedOnly, limit, offset }));
   }
-  return c.html(layout("Tags", tagsPage({ tags, search, sort, unusedOnly, total, count, page, limit }), { profile, activeNav: "tags" }));
+  const csrf = await getCsrfToken(c.env);
+  return c.html(layout("Tags", tagsPage({ tags, search, sort, unusedOnly, total, count, page, limit, csrfToken: csrf }), { profile, activeNav: "tags", csrfToken: csrf }));
 });
 
-webRouter.post("/tags/merge", webAuth, async (c) => {
+function tagReturnUrl(form: FormData): string {
+  const params = new URLSearchParams();
+  if (form.get("search")) params.set("search", (form.get("search") as string) || "");
+  if (form.get("sort")) params.set("sort", (form.get("sort") as string) || "");
+  if (form.get("unused") === "true") params.set("unused", "true");
+  if (form.get("page")) params.set("page", (form.get("page") as string) || "");
+  const qs = params.toString();
+  return qs ? `/tags?${qs}` : "/tags";
+}
+
+webRouter.post("/tags/merge", webAuth, csrfVerify, async (c) => {
   const form = await getFormData(c);
   const source = (form.get("source") as string || "").trim();
   const target = (form.get("target") as string || "").trim();
@@ -396,19 +485,36 @@ webRouter.post("/tags/merge", webAuth, async (c) => {
   return c.redirect("/tags", 302);
 });
 
-webRouter.post("/tags/:id/delete", webAuth, async (c) => {
+webRouter.post("/tags/delete-unused", webAuth, csrfVerify, async (c) => {
+  await c.env.DB.prepare("DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM bookmark_tags)").run();
+  return c.redirect("/tags?unused=true", 302);
+});
+
+webRouter.post("/tags/:id/rename", webAuth, csrfVerify, async (c) => {
+  const id = parseInt(c.req.param("id") || "", 10);
+  const form = await getFormData(c);
+  const name = ((form.get("name") as string) || "").trim();
+  if (!id || !name) return c.redirect(tagReturnUrl(form), 302);
+  const existing = await c.env.DB.prepare("SELECT * FROM tags WHERE id = ?").bind(id).first<TagRow>();
+  if (!existing) return c.redirect(tagReturnUrl(form), 302);
+  const target = await c.env.DB.prepare("SELECT * FROM tags WHERE LOWER(name) = LOWER(?) AND id != ?").bind(name, id).first<TagRow>();
+  if (target) {
+    await c.env.DB.prepare("UPDATE OR IGNORE bookmark_tags SET tag_id = ? WHERE tag_id = ?").bind(target.id, id).run();
+    await c.env.DB.prepare("DELETE FROM bookmark_tags WHERE tag_id = ?").bind(id).run();
+    await c.env.DB.prepare("DELETE FROM tags WHERE id = ?").bind(id).run();
+  } else {
+    await c.env.DB.prepare("UPDATE tags SET name = ? WHERE id = ?").bind(name, id).run();
+  }
+  return c.redirect(tagReturnUrl(form), 302);
+});
+
+webRouter.post("/tags/:id/delete", webAuth, csrfVerify, async (c) => {
   const id = parseInt(c.req.param("id") || "", 10);
   await c.env.DB.prepare("DELETE FROM bookmark_tags WHERE tag_id = ?").bind(id).run();
   await c.env.DB.prepare("DELETE FROM tags WHERE id = ?").bind(id).run();
   // Preserve filter / pagination state when returning to the tags list.
   const form = await getFormData(c);
-  const params = new URLSearchParams();
-  if (form.get("search")) params.set("search", (form.get("search") as string) || "");
-  if (form.get("sort")) params.set("sort", (form.get("sort") as string) || "");
-  if (form.get("unused") === "true") params.set("unused", "true");
-  if (form.get("page")) params.set("page", (form.get("page") as string) || "");
-  const qs = params.toString();
-  return c.redirect(qs ? `/tags?${qs}` : "/tags", 302);
+  return c.redirect(tagReturnUrl(form), 302);
 });
 
 // ── Bundles ─────────────────────────────────────────────────────────
@@ -471,19 +577,32 @@ webRouter.get("/settings", webAuth, async (c) => {
   const profile = await getProfile(c.env.DB);
   const tokens = await listApiTokens(c.env.DB);
   const csrf = await getCsrfToken(c.env);
-  return c.html(layout("Settings", settingsPage({ profile, tokens, csrfToken: csrf }), { profile, activeNav: "settings", csrfToken: csrf }));
+  const siteUrl = new URL(c.req.url).origin;
+  const applicationUrl = siteUrl + "/bookmarks/new";
+  const currentFeed = await c.env.DB.prepare("SELECT key FROM feed_tokens LIMIT 1").first<FeedTokenRow>();
+  const flash = c.req.query("saved") === "1" ? "Settings saved." : undefined;
+  return c.html(layout("Settings", settingsPage({ profile, tokens, csrfToken: csrf, applicationUrl, currentFeedToken: currentFeed?.key, siteUrl }), { profile, activeNav: "settings", flash, csrfToken: csrf }));
 });
 
 webRouter.post("/settings", webAuth, csrfVerify, async (c) => {
   const form = await getFormData(c);
   await c.env.DB.prepare(
-    "UPDATE user_profile SET theme=?, items_per_page=?, enable_sharing=?, enable_favicons=?, tag_search=?, web_archive_integration=?, custom_css=?, auto_tagging_rules=?, default_mark_unread=?, default_mark_shared=?, enable_public_sharing=? WHERE id=1"
+    "UPDATE user_profile SET theme=?, items_per_page=?, bookmark_link_target=?, bookmark_date_display=?, display_url=?, permanent_notes=?, enable_preview_images=?, bookmark_description_display=?, bookmark_description_max_lines=?, collapse_side_panel=?, enable_sharing=?, enable_favicons=?, tag_search=?, tag_grouping=?, web_archive_integration=?, custom_css=?, auto_tagging_rules=?, default_mark_unread=?, default_mark_shared=?, enable_public_sharing=? WHERE id=1"
   ).bind(
     form.get("theme") as string || "auto",
     parseInt(form.get("items_per_page") as string || "30", 10),
+    form.get("bookmark_link_target") === "_self" ? "_self" : "_blank",
+    ["relative", "absolute", "hidden"].includes(String(form.get("bookmark_date_display"))) ? String(form.get("bookmark_date_display")) : "relative",
+    form.get("display_url") === "1" ? 1 : 0,
+    form.get("permanent_notes") === "1" ? 1 : 0,
+    form.get("enable_preview_images") === "1" ? 1 : 0,
+    ["separate", "inline", "hidden"].includes(String(form.get("bookmark_description_display"))) ? String(form.get("bookmark_description_display")) : "separate",
+    Math.min(Math.max(parseInt(form.get("bookmark_description_max_lines") as string || "3", 10), 1), 10),
+    form.get("collapse_side_panel") === "1" ? 1 : 0,
     form.get("enable_sharing") === "1" ? 1 : 0,
     form.get("enable_favicons") === "1" ? 1 : 0,
     form.get("tag_search") as string || "strict",
+    ["disabled", "alphabetical", "prefix"].includes(String(form.get("tag_grouping"))) ? String(form.get("tag_grouping")) : "disabled",
     form.get("web_archive_integration") as string || "disabled",
     form.get("custom_css") as string || "",
     form.get("auto_tagging_rules") as string || "",
@@ -491,13 +610,18 @@ webRouter.post("/settings", webAuth, csrfVerify, async (c) => {
     form.get("default_mark_shared") === "1" ? 1 : 0,
     form.get("enable_public_sharing") === "1" ? 1 : 0,
   ).run();
-  return c.redirect("/settings", 302);
+  return c.redirect("/settings?saved=1", 302);
 });
 
 webRouter.post("/settings/auto-tagging", webAuth, csrfVerify, async (c) => {
   const form = await getFormData(c);
   await c.env.DB.prepare("UPDATE user_profile SET auto_tagging_rules=? WHERE id=1").bind(form.get("auto_tagging_rules") as string || "").run();
   return c.redirect("/settings", 302);
+});
+
+webRouter.post("/settings/search-preferences/clear", webAuth, csrfVerify, async (c) => {
+  await c.env.DB.prepare("UPDATE user_profile SET search_preferences='{}' WHERE id=1").run();
+  return c.redirect("/settings?saved=1", 302);
 });
 
 webRouter.post("/settings/api-token", webAuth, csrfVerify, async (c) => {
@@ -509,7 +633,7 @@ webRouter.post("/settings/api-token", webAuth, csrfVerify, async (c) => {
   const profile = await getProfile(c.env.DB);
   const tokens = await listApiTokens(c.env.DB);
   const csrf = await getCsrfToken(c.env);
-  return c.html(layout("Settings", settingsPage({ profile, tokens, newToken: key, csrfToken: csrf }), { profile, activeNav: "settings", csrfToken: csrf }));
+  return c.html(layout("Settings", settingsPage({ profile, tokens, newToken: key, csrfToken: csrf, applicationUrl: new URL(c.req.url).origin + "/bookmarks/new" }), { profile, activeNav: "settings", csrfToken: csrf }));
 });
 
 webRouter.post("/settings/api-token/delete", webAuth, csrfVerify, async (c) => {
@@ -553,7 +677,7 @@ webRouter.post("/settings/import", webAuth, csrfVerify, async (c) => {
   if (failed) parts.push(`${failed} failed`);
   if (skipped) parts.push(`${skipped} skipped`);
   const flash = parts.join(", ") + ".";
-  return c.html(layout("Settings", settingsPage({ profile, tokens, csrfToken: csrf }), { profile, activeNav: "settings", flash, csrfToken: csrf }));
+  return c.html(layout("Settings", settingsPage({ profile, tokens, csrfToken: csrf, applicationUrl: new URL(c.req.url).origin + "/bookmarks/new" }), { profile, activeNav: "settings", flash, csrfToken: csrf }));
 });
 
 webRouter.get("/settings/export", webAuth, async (c) => {
@@ -581,7 +705,8 @@ webRouter.post("/settings/feed-token", webAuth, csrfVerify, async (c) => {
   const profile = await getProfile(c.env.DB);
   const tokens = await listApiTokens(c.env.DB);
   const csrf = await getCsrfToken(c.env);
-  return c.html(layout("Settings", settingsPage({ profile, tokens, feedToken: key, csrfToken: csrf }), { profile, activeNav: "settings", csrfToken: csrf }));
+  const siteUrl = new URL(c.req.url).origin;
+  return c.html(layout("Settings", settingsPage({ profile, tokens, feedToken: key, currentFeedToken: key, csrfToken: csrf, applicationUrl: siteUrl + "/bookmarks/new", siteUrl }), { profile, activeNav: "settings", csrfToken: csrf }));
 });
 
 // ── RSS/Atom Feeds (T12) ────────────────────────────────────────────
